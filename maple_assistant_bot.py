@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-14-ld-full-cookbot-v4"
+APP_VERSION = "2026-06-14-ld-crop-xfix-v5"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -127,7 +127,7 @@ OCR_REJECT_KEYWORDS = (
     "WINDOW", "CONFIG", "CURSOR", "DETECTOR", "DUNGEON", "HENESYS", "ATTACK",
     "BUFF", "SKILL", "PROFILE", "CONTROL", "OCR", "ENTERX2",
 )
-COOKBOT_CODE_OFFSET = (162, -47, 150, 24)
+COOKBOT_CODE_OFFSET = (92, -47, 220, 24)
 COOKBOT_INPUT_OFFSET = (164, -16)
 COOKBOT_RESULT_OFFSET = (156, -74, 360, 82)
 
