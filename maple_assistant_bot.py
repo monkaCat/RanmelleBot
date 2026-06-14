@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-14-ld-crop-xfix-v5"
+APP_VERSION = "2026-06-14-ld-popup-verify-v6"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -888,7 +888,7 @@ class AutomationBackend:
         self.last_detector["__ocr__"] = current
         if ocr.tesseract_path and pytesseract is not None:
             pytesseract.pytesseract.tesseract_cmd = ocr.tesseract_path
-        popup = self.find_image(ocr.popup_image, ocr.popup_confidence)
+        popup = self.find_ocr_popup(ocr)
         if not popup:
             self.ocr_last_answer = ""
             self.ocr_attempt_count = 0
@@ -1197,6 +1197,55 @@ class AutomationBackend:
     def is_henesys_visible(self, dungeon: DungeonConfig) -> bool:
         return self.find_image(dungeon.npc_image, min(dungeon.confidence, 0.65)) is not None
 
+    def find_ocr_popup(self, ocr: OcrConfig) -> Optional[dict[str, Any]]:
+        if not ocr.popup_image:
+            return None
+        if not ocr.cookbot_label_preset:
+            return self.find_image(ocr.popup_image, ocr.popup_confidence)
+        candidates = self.find_image_candidates(ocr.popup_image, ocr.popup_confidence, limit=20)
+        for candidate in candidates:
+            self.last_ocr_popup = candidate
+            if self.is_valid_cookbot_code_crop(candidate):
+                append_event_log(
+                    f"Lie Detector popup candidate accepted at {candidate.get('top_left')} "
+                    f"confidence={candidate.get('confidence'):.3f}."
+                )
+                return candidate
+            append_event_log(
+                f"Lie Detector popup candidate rejected at {candidate.get('top_left')} "
+                f"confidence={candidate.get('confidence'):.3f}; code crop did not look valid."
+            )
+        self.last_ocr_popup = None
+        return None
+
+    def is_valid_cookbot_code_crop(self, popup: dict[str, Any]) -> bool:
+        if ImageGrab is None or cv2 is None or np is None:
+            return True
+        left, top = popup["top_left"]
+        x_off, y_off, width, height = COOKBOT_CODE_OFFSET
+        x = left + x_off
+        y = top + y_off
+        if x < 0 or y < 0 or width <= 0 or height <= 0:
+            return False
+        try:
+            img = ImageGrab.grab(bbox=(x, y, x + width, y + height)).convert("RGB")
+        except Exception as exc:
+            append_event_log(f"Cookbot code crop validation failed to grab region=({x}, {y}, {width}, {height}): {exc}")
+            return False
+        arr = np.array(img)
+        gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+        white_ratio = float((gray > 235).mean())
+        dark_ratio = float((gray < 90).mean())
+        blue_score = arr[:, :, 2].astype(np.int16) - (
+            (arr[:, :, 0].astype(np.int16) + arr[:, :, 1].astype(np.int16)) // 2
+        )
+        colored_text_ratio = float(((gray < 210) & (blue_score > 8)).mean())
+        append_event_log(
+            f"Cookbot code crop validation region=({x}, {y}, {width}, {height}) "
+            f"white_ratio={white_ratio:.3f} dark_ratio={dark_ratio:.3f} colored_text_ratio={colored_text_ratio:.3f}."
+        )
+        return white_ratio >= 0.65 and dark_ratio <= 0.20 and colored_text_ratio <= 0.25
+
     def start_dungeon_entry(self, dungeon: DungeonConfig, current: Optional[int] = None, henesys_visible: Optional[bool] = None) -> bool:
         current = current or now_ms()
         npc = self.find_image(dungeon.npc_image, min(dungeon.confidence, 0.65))
@@ -1491,6 +1540,63 @@ class AutomationBackend:
             "center": (int(screen_x + w / 2), int(screen_y + h / 2)),
             "size": (int(w), int(h)),
         }
+
+    def find_image_candidates(
+        self,
+        template_path: str,
+        confidence: float,
+        region: Optional[tuple[int, int, int, int]] = None,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        template_path = resolve_template_path(template_path)
+        if not template_path or not os.path.exists(template_path):
+            return []
+        if ImageGrab is None or cv2 is None or np is None:
+            return []
+        offset_x = 0
+        offset_y = 0
+        if region:
+            offset_x, offset_y, width, height = region
+            screenshot = ImageGrab.grab(bbox=(offset_x, offset_y, offset_x + width, offset_y + height))
+        else:
+            screenshot = ImageGrab.grab()
+        screen = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+        template = cv2.imread(template_path, cv2.IMREAD_COLOR)
+        if template is None:
+            return []
+        h, w = template.shape[:2]
+        maps = [cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)]
+        gray_screen = cv2.cvtColor(screen, cv2.COLOR_BGR2GRAY)
+        gray_template = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+        maps.append(cv2.matchTemplate(gray_screen, gray_template, cv2.TM_CCOEFF_NORMED))
+
+        raw: list[tuple[float, int, int]] = []
+        for result in maps:
+            ys, xs = np.where(result >= confidence)
+            for x, y in zip(xs, ys):
+                raw.append((float(result[y, x]), int(x), int(y)))
+        raw.sort(reverse=True, key=lambda item: item[0])
+
+        candidates: list[dict[str, Any]] = []
+        for score, x, y in raw:
+            if any(abs(x - kept["raw_top_left"][0]) < w and abs(y - kept["raw_top_left"][1]) < h for kept in candidates):
+                continue
+            screen_x = x + offset_x
+            screen_y = y + offset_y
+            candidates.append(
+                {
+                    "confidence": score,
+                    "top_left": (int(screen_x), int(screen_y)),
+                    "center": (int(screen_x + w / 2), int(screen_y + h / 2)),
+                    "size": (int(w), int(h)),
+                    "raw_top_left": (x, y),
+                }
+            )
+            if len(candidates) >= limit:
+                break
+        for candidate in candidates:
+            candidate.pop("raw_top_left", None)
+        return candidates
 
 
 class MapleBotApp(tk.Tk):
