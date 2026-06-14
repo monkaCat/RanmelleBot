@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-14-ld-popup-verify-v6"
+APP_VERSION = "2026-06-15-ld-dynamic-code-crop-v7"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -130,6 +130,7 @@ OCR_REJECT_KEYWORDS = (
 COOKBOT_CODE_OFFSET = (92, -47, 220, 24)
 COOKBOT_INPUT_OFFSET = (164, -16)
 COOKBOT_RESULT_OFFSET = (156, -74, 360, 82)
+COOKBOT_CODE_SEARCH_OFFSET = (100, -88, 430, 92)
 
 VK_CODES = {
     "backspace": 0x08,
@@ -1087,6 +1088,8 @@ class AutomationBackend:
 
     def ld_code_region(self, ocr: OcrConfig) -> tuple[int, int, int, int]:
         if self.use_cookbot_label_preset(ocr):
+            if self.last_ocr_popup and self.last_ocr_popup.get("code_region"):
+                return self.last_ocr_popup["code_region"]
             return self.cookbot_offset_region(COOKBOT_CODE_OFFSET)
         return self.ocr_region(ocr, ocr.region_x, ocr.region_y, ocr.region_w, ocr.region_h)
 
@@ -1221,12 +1224,11 @@ class AutomationBackend:
     def is_valid_cookbot_code_crop(self, popup: dict[str, Any]) -> bool:
         if ImageGrab is None or cv2 is None or np is None:
             return True
-        left, top = popup["top_left"]
-        x_off, y_off, width, height = COOKBOT_CODE_OFFSET
-        x = left + x_off
-        y = top + y_off
-        if x < 0 or y < 0 or width <= 0 or height <= 0:
+        region = self.locate_cookbot_code_region(popup)
+        if not region:
             return False
+        popup["code_region"] = region
+        x, y, width, height = region
         try:
             img = ImageGrab.grab(bbox=(x, y, x + width, y + height)).convert("RGB")
         except Exception as exc:
@@ -1245,6 +1247,86 @@ class AutomationBackend:
             f"white_ratio={white_ratio:.3f} dark_ratio={dark_ratio:.3f} colored_text_ratio={colored_text_ratio:.3f}."
         )
         return white_ratio >= 0.65 and dark_ratio <= 0.20 and colored_text_ratio <= 0.25
+
+    def locate_cookbot_code_region(self, popup: dict[str, Any]) -> Optional[tuple[int, int, int, int]]:
+        if ImageGrab is None or cv2 is None or np is None:
+            return None
+        left, top = popup["top_left"]
+        x_off, y_off, search_w, search_h = COOKBOT_CODE_SEARCH_OFFSET
+        search_x = max(0, left + x_off)
+        search_y = max(0, top + y_off)
+        try:
+            img = ImageGrab.grab(bbox=(search_x, search_y, search_x + search_w, search_y + search_h)).convert("RGB")
+            img.save(APP_DIR / "last_ld_code_search.png")
+        except Exception as exc:
+            append_event_log(
+                f"Cookbot code search grab failed region=({search_x}, {search_y}, {search_w}, {search_h}): {exc}"
+            )
+            return None
+
+        arr = np.array(img)
+        gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+        row_dark = (gray < 80).sum(axis=1)
+        input_line_candidates = np.where(row_dark > max(80, search_w * 0.22))[0]
+        input_line_y = int(input_line_candidates[0]) if len(input_line_candidates) else search_h
+
+        usable_bottom = max(10, min(input_line_y - 2, search_h))
+        blue_score = arr[:, :, 2].astype(np.int16) - (
+            (arr[:, :, 0].astype(np.int16) + arr[:, :, 1].astype(np.int16)) // 2
+        )
+        text_mask = ((gray < 225) | (blue_score > 10))
+        text_mask[:8, :] = False
+        text_mask[usable_bottom:, :] = False
+
+        row_counts = text_mask.sum(axis=1)
+        active_rows = np.where((row_counts >= 2) & (row_counts <= 160))[0]
+        groups: list[tuple[int, int]] = []
+        if len(active_rows):
+            start = int(active_rows[0])
+            previous = start
+            for row in active_rows[1:]:
+                row = int(row)
+                if row <= previous + 2:
+                    previous = row
+                    continue
+                groups.append((start, previous))
+                start = row
+                previous = row
+            groups.append((start, previous))
+
+        best_region: Optional[tuple[int, int, int, int]] = None
+        for start, end in reversed(groups):
+            if end - start + 1 < 3:
+                continue
+            group_mask = text_mask[max(0, start - 2):min(usable_bottom, end + 3), :]
+            xs = np.where(group_mask.any(axis=0))[0]
+            if len(xs) < 10:
+                continue
+            min_x = int(xs[0])
+            max_x = int(xs[-1])
+            crop_w = max_x - min_x + 1
+            if crop_w > 240:
+                continue
+            crop_x = max(0, min_x - 8)
+            crop_y = max(0, start - 7)
+            crop_w = min(search_w - crop_x, crop_w + 20)
+            crop_h = min(search_h - crop_y, max(22, end - start + 15))
+            best_region = (search_x + crop_x, search_y + crop_y, crop_w, crop_h)
+            break
+
+        if not best_region:
+            fallback = self.cookbot_offset_region(COOKBOT_CODE_OFFSET)
+            append_event_log(
+                f"Cookbot dynamic code crop not found; using fallback region={fallback} "
+                f"search=({search_x}, {search_y}, {search_w}, {search_h}) input_line_y={input_line_y}."
+            )
+            return fallback
+
+        append_event_log(
+            f"Cookbot dynamic code crop selected region={best_region} "
+            f"search=({search_x}, {search_y}, {search_w}, {search_h}) input_line_y={input_line_y}."
+        )
+        return best_region
 
     def start_dungeon_entry(self, dungeon: DungeonConfig, current: Optional[int] = None, henesys_visible: Optional[bool] = None) -> bool:
         current = current or now_ms()
