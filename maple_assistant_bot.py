@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-ld-code-line-select-v10"
+APP_VERSION = "2026-06-15-ld-code-band-crop-v11"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -1312,6 +1312,32 @@ class AutomationBackend:
         text_mask[:, panel_right:] = False
         text_mask[:, :2] = False
 
+        band_top = max(8, input_line_y - 42)
+        band_bottom = max(band_top + 8, min(input_line_y - 6, search_h))
+        band_mask = text_mask[band_top:band_bottom, :panel_right]
+        band_row_counts = band_mask.sum(axis=1)
+        active_band_rows = np.where((band_row_counts >= 1) & (band_row_counts <= 140))[0]
+        band_region: Optional[tuple[int, int, int, int]] = None
+        band_candidate: Optional[tuple[int, int, int, int]] = None
+        if len(active_band_rows):
+            band_active = np.zeros_like(band_mask, dtype=bool)
+            band_active[active_band_rows, :] = band_mask[active_band_rows, :]
+            ys, xs = np.where(band_active)
+            if len(xs) >= 12 and len(ys):
+                min_x = int(xs.min())
+                max_x = int(xs.max())
+                min_y = int(ys.min()) + band_top
+                max_y = int(ys.max()) + band_top
+                crop_w = max_x - min_x + 1
+                crop_h_raw = max_y - min_y + 1
+                if 25 <= crop_w <= 190 and 2 <= crop_h_raw <= 18:
+                    crop_x = max(0, min_x - 8)
+                    crop_y = max(0, min_y - 8)
+                    crop_w = min(panel_right - crop_x, crop_w + 20)
+                    crop_h = min(search_h - crop_y, max(24, crop_h_raw + 16))
+                    band_region = (search_x + crop_x, search_y + crop_y, crop_w, crop_h)
+                    band_candidate = (min_y, max_y, min_x, max_x)
+
         row_counts = text_mask.sum(axis=1)
         active_rows = np.where((row_counts >= 2) & (row_counts <= 160))[0]
         groups: list[tuple[int, int]] = []
@@ -1355,7 +1381,10 @@ class AutomationBackend:
 
         best_region: Optional[tuple[int, int, int, int]] = None
         best_candidate: Optional[tuple[int, int, int, int]] = None
-        if code_candidates:
+        if band_region:
+            best_region = band_region
+            best_candidate = band_candidate
+        elif code_candidates:
             code_candidates.sort(key=lambda item: item[0])
             _, best_region, best_candidate = code_candidates[0]
 
@@ -1364,14 +1393,15 @@ class AutomationBackend:
             append_event_log(
                 f"Cookbot dynamic code crop not found; using fallback region={fallback} "
                 f"search=({search_x}, {search_y}, {search_w}, {search_h}) panel_right={panel_right} "
-                f"input_line_y={input_line_y}."
+                f"input_line_y={input_line_y} band=({band_top}, {band_bottom}) groups={groups}."
             )
             return fallback
 
         append_event_log(
             f"Cookbot dynamic code crop selected region={best_region} "
             f"search=({search_x}, {search_y}, {search_w}, {search_h}) panel_right={panel_right} "
-            f"input_line_y={input_line_y} groups={groups} best_candidate={best_candidate}."
+            f"input_line_y={input_line_y} band=({band_top}, {band_bottom}) "
+            f"groups={groups} best_candidate={best_candidate}."
         )
         return best_region
 
