@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-ld-separate-debug-crops-v9"
+APP_VERSION = "2026-06-15-ld-code-line-select-v10"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -1278,7 +1278,10 @@ class AutomationBackend:
         search_y = max(0, top + y_off)
         try:
             if pyautogui is not None:
-                pyautogui.moveTo(max(0, left + 18), max(0, top + 8), duration=0)
+                screen_w, screen_h = pyautogui.size()
+                safe_x = min(max(0, search_x + search_w + 60), max(0, screen_w - 2))
+                safe_y = min(max(0, search_y + search_h + 60), max(0, screen_h - 2))
+                pyautogui.moveTo(safe_x, safe_y, duration=0)
                 time.sleep(0.05)
             img = ImageGrab.grab(bbox=(search_x, search_y, search_x + search_w, search_y + search_h)).convert("RGB")
             img.save(APP_DIR / "last_ld_code_search.png")
@@ -1325,25 +1328,36 @@ class AutomationBackend:
                 previous = row
             groups.append((start, previous))
 
-        best_region: Optional[tuple[int, int, int, int]] = None
-        for start, end in reversed(groups):
-            if end - start + 1 < 3:
+        code_candidates: list[tuple[int, tuple[int, int, int, int], tuple[int, int, int, int]]] = []
+        for start, end in groups:
+            group_h = end - start + 1
+            if group_h < 3 or group_h > 18:
                 continue
             group_mask = text_mask[max(0, start - 2):min(usable_bottom, end + 3), :]
             xs = np.where(group_mask.any(axis=0))[0]
-            if len(xs) < 10:
+            if len(xs) < 25:
                 continue
             min_x = int(xs[0])
             max_x = int(xs[-1])
             crop_w = max_x - min_x + 1
-            if crop_w > 240:
+            if crop_w < 35 or crop_w > 180:
+                continue
+            if start < 28 or end > input_line_y - 7:
                 continue
             crop_x = max(0, min_x - 8)
             crop_y = max(0, start - 7)
             crop_w = min(panel_right - crop_x, crop_w + 20)
             crop_h = min(search_h - crop_y, max(22, end - start + 15))
-            best_region = (search_x + crop_x, search_y + crop_y, crop_w, crop_h)
-            break
+            # The LD code is the compact text row closest above the input line.
+            score = input_line_y - end
+            region = (search_x + crop_x, search_y + crop_y, crop_w, crop_h)
+            code_candidates.append((score, region, (start, end, min_x, max_x)))
+
+        best_region: Optional[tuple[int, int, int, int]] = None
+        best_candidate: Optional[tuple[int, int, int, int]] = None
+        if code_candidates:
+            code_candidates.sort(key=lambda item: item[0])
+            _, best_region, best_candidate = code_candidates[0]
 
         if not best_region:
             fallback = self.cookbot_offset_region(COOKBOT_CODE_OFFSET)
@@ -1357,7 +1371,7 @@ class AutomationBackend:
         append_event_log(
             f"Cookbot dynamic code crop selected region={best_region} "
             f"search=({search_x}, {search_y}, {search_w}, {search_h}) panel_right={panel_right} "
-            f"input_line_y={input_line_y} groups={groups}."
+            f"input_line_y={input_line_y} groups={groups} best_candidate={best_candidate}."
         )
         return best_region
 
