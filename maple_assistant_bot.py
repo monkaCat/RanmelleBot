@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-ld-white-panel-crop-v8"
+APP_VERSION = "2026-06-15-ld-separate-debug-crops-v9"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -993,7 +993,13 @@ class AutomationBackend:
             append_event_log("Lie Detector result check aborted because bot was stopped.")
             return
         result_x, result_y, result_w, result_h = self.ld_result_region(ocr)
-        result = self.read_text_region(result_x, result_y, result_w, result_h)
+        result = self.read_text_region(
+            result_x,
+            result_y,
+            result_w,
+            result_h,
+            save_name="last_ld_result_crop.png",
+        )
         if self.should_abort_actions():
             append_event_log("Lie Detector result check aborted after OCR read because bot was stopped.")
             return
@@ -1043,7 +1049,14 @@ class AutomationBackend:
             f"Reading Lie Detector OCR region=({x}, {y}, {width}, {height}) "
             f"relative_to_popup={ocr.relative_to_popup} cookbot_label_preset={ocr.cookbot_label_preset}"
         )
-        return self.read_text_region(x, y, width, height, psm_modes=("7", "8", "13"))
+        return self.read_text_region(
+            x,
+            y,
+            width,
+            height,
+            psm_modes=("7", "8", "13"),
+            save_name="last_ld_code_crop.png",
+        )
 
     def park_mouse_for_ocr(self, ocr: OcrConfig, region: Optional[tuple[int, int, int, int]] = None) -> None:
         if pyautogui is None:
@@ -1113,7 +1126,15 @@ class AutomationBackend:
         point_x, point_y = self.ocr_point(ocr, x, y)
         return point_x, point_y, width, height
 
-    def read_text_region(self, x: int, y: int, width: int, height: int, psm_modes: tuple[str, ...] = ("6", "7")) -> str:
+    def read_text_region(
+        self,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+        psm_modes: tuple[str, ...] = ("6", "7"),
+        save_name: str = "last_ocr_crop.png",
+    ) -> str:
         if pytesseract is None:
             self.log("pytesseract is not installed.")
             return ""
@@ -1122,7 +1143,7 @@ class AutomationBackend:
         bbox = (x, y, x + width, y + height)
         img = ImageGrab.grab(bbox=bbox)
         try:
-            img.save(APP_DIR / "last_ld_code_crop.png")
+            img.save(APP_DIR / save_name)
         except Exception:
             pass
         processed_images = self.prepare_ocr_images(img)
@@ -1131,7 +1152,7 @@ class AutomationBackend:
             for psm in psm_modes:
                 config = f"--oem 3 --psm {psm} -c tessedit_char_whitelist={OCR_ALLOWED_CHARS}"
                 candidates.append(clean_ocr_text(pytesseract.image_to_string(processed, config=config)))
-        append_event_log(f"OCR candidates: {candidates}")
+        append_event_log(f"OCR candidates from {save_name}: {candidates}")
         valid = [candidate for candidate in candidates if is_valid_ld_code(candidate)]
         if valid:
             return max(valid, key=len)
