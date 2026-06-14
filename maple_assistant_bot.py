@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-ld-dynamic-code-crop-v7"
+APP_VERSION = "2026-06-15-ld-white-panel-crop-v8"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -1256,6 +1256,9 @@ class AutomationBackend:
         search_x = max(0, left + x_off)
         search_y = max(0, top + y_off)
         try:
+            if pyautogui is not None:
+                pyautogui.moveTo(max(0, left + 18), max(0, top + 8), duration=0)
+                time.sleep(0.05)
             img = ImageGrab.grab(bbox=(search_x, search_y, search_x + search_w, search_y + search_h)).convert("RGB")
             img.save(APP_DIR / "last_ld_code_search.png")
         except Exception as exc:
@@ -1266,8 +1269,13 @@ class AutomationBackend:
 
         arr = np.array(img)
         gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
-        row_dark = (gray < 80).sum(axis=1)
-        input_line_candidates = np.where(row_dark > max(80, search_w * 0.22))[0]
+        white_col_ratio = (gray > 238).mean(axis=0)
+        panel_candidates = np.where(white_col_ratio > 0.48)[0]
+        panel_right = int(panel_candidates[-1]) + 1 if len(panel_candidates) else search_w
+        panel_right = max(120, min(panel_right, search_w))
+        panel_gray = gray[:, :panel_right]
+        row_dark = (panel_gray < 80).sum(axis=1)
+        input_line_candidates = np.where(row_dark > max(70, panel_right * 0.28))[0]
         input_line_y = int(input_line_candidates[0]) if len(input_line_candidates) else search_h
 
         usable_bottom = max(10, min(input_line_y - 2, search_h))
@@ -1277,6 +1285,8 @@ class AutomationBackend:
         text_mask = ((gray < 225) | (blue_score > 10))
         text_mask[:8, :] = False
         text_mask[usable_bottom:, :] = False
+        text_mask[:, panel_right:] = False
+        text_mask[:, :2] = False
 
         row_counts = text_mask.sum(axis=1)
         active_rows = np.where((row_counts >= 2) & (row_counts <= 160))[0]
@@ -1309,7 +1319,7 @@ class AutomationBackend:
                 continue
             crop_x = max(0, min_x - 8)
             crop_y = max(0, start - 7)
-            crop_w = min(search_w - crop_x, crop_w + 20)
+            crop_w = min(panel_right - crop_x, crop_w + 20)
             crop_h = min(search_h - crop_y, max(22, end - start + 15))
             best_region = (search_x + crop_x, search_y + crop_y, crop_w, crop_h)
             break
@@ -1318,13 +1328,15 @@ class AutomationBackend:
             fallback = self.cookbot_offset_region(COOKBOT_CODE_OFFSET)
             append_event_log(
                 f"Cookbot dynamic code crop not found; using fallback region={fallback} "
-                f"search=({search_x}, {search_y}, {search_w}, {search_h}) input_line_y={input_line_y}."
+                f"search=({search_x}, {search_y}, {search_w}, {search_h}) panel_right={panel_right} "
+                f"input_line_y={input_line_y}."
             )
             return fallback
 
         append_event_log(
             f"Cookbot dynamic code crop selected region={best_region} "
-            f"search=({search_x}, {search_y}, {search_w}, {search_h}) input_line_y={input_line_y}."
+            f"search=({search_x}, {search_y}, {search_w}, {search_h}) panel_right={panel_right} "
+            f"input_line_y={input_line_y} groups={groups}."
         )
         return best_region
 
