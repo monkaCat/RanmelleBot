@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-lightweight-v1"
+APP_VERSION = "2026-06-15-lightweight-home-cycle-v2"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -663,6 +663,8 @@ class AutomationBackend:
         self.action_pause_until = 0
         self.last_minimap_position: Optional[tuple[int, int]] = None
         self.dungeon_entry_started = False
+        self.dungeon_cycle_phase = "attack"
+        self.dungeon_phase_until = 0
 
     def start(self, config: BotConfig) -> None:
         if self.running:
@@ -676,6 +678,8 @@ class AutomationBackend:
         self.last_home_return = 0
         self.last_home_debug_log = 0
         self.last_minimap_position = None
+        self.dungeon_cycle_phase = "attack"
+        self.dungeon_phase_until = 0
         self.ocr_active_until = 0
         self.ocr_pause_until = 0
         self.last_ocr_popup = None
@@ -1355,10 +1359,24 @@ class AutomationBackend:
             return False
         if not finish:
             self.finish_handled = False
-        if current - self.last_home_return >= max(dungeon.return_home_every_ms, 250):
-            self.last_home_return = current
-            self.return_to_home(dungeon)
-        return True
+        cycle_ms = max(dungeon.return_home_every_ms, 250)
+        if current >= self.dungeon_phase_until:
+            if self.dungeon_cycle_phase == "attack":
+                self.dungeon_cycle_phase = "walk"
+                self.dungeon_phase_until = current + cycle_ms
+                self.last_home_return = current
+                self.attack_loop_enabled = False
+                self.release_attack()
+                moved = self.return_to_home(dungeon)
+                if moved:
+                    return False
+                self.dungeon_cycle_phase = "attack"
+                self.dungeon_phase_until = current + cycle_ms
+                return True
+            self.dungeon_cycle_phase = "attack"
+            self.dungeon_phase_until = current + cycle_ms
+            return True
+        return self.dungeon_cycle_phase == "attack"
 
     def is_henesys_visible(self, dungeon: DungeonConfig) -> bool:
         return self.find_image(dungeon.npc_image, min(dungeon.confidence, 0.65)) is not None
@@ -1624,13 +1642,13 @@ class AutomationBackend:
                 self.press("enter")
             self.log(f"Dialog step: {step}")
 
-    def return_to_home(self, dungeon: DungeonConfig) -> None:
+    def return_to_home(self, dungeon: DungeonConfig) -> bool:
         current = now_ms()
         if dungeon.home_x <= 0 or dungeon.home_y <= 0:
             if current - self.last_home_debug_log >= 5000:
                 self.last_home_debug_log = current
                 self.log("Home return skipped: Minimap Home X/Y is not set.")
-            return
+            return False
         if dungeon.minimap_w > 0 and dungeon.minimap_h > 0:
             if not (
                 dungeon.minimap_x <= dungeon.home_x <= dungeon.minimap_x + dungeon.minimap_w
@@ -1642,26 +1660,26 @@ class AutomationBackend:
                         "Home return skipped: Minimap Home X/Y is outside the Minimap X/Y/W/H box. "
                         "Use the cursor position on the minimap, not the character position in the map."
                     )
-                return
+                return False
             char = self.find_minimap_character(dungeon)
             if not char:
                 if current - self.last_home_debug_log >= 5000:
                     self.last_home_debug_log = current
                     self.log("Home return skipped: yellow minimap character was not found.")
-                return
+                return False
             if current - self.last_home_debug_log >= 5000:
                 self.last_home_debug_log = current
                 self.log(
                     f"Minimap marker: {char['center']} candidates={char.get('candidates', 0)} "
                     f"area={char.get('area', 0):.1f} size={char.get('size', ('?', '?'))}"
                 )
-            self.move_towards_home(dungeon, char["center"][0], char["center"][1], "minimap")
-            return
+            return self.move_towards_home(dungeon, char["center"][0], char["center"][1], "minimap")
         if current - self.last_home_debug_log >= 5000:
             self.last_home_debug_log = current
             self.log("Home return skipped: Minimap X/Y/W/H is not set.")
+        return False
 
-    def move_towards_home(self, dungeon: DungeonConfig, x: int, y: int, source: str) -> None:
+    def move_towards_home(self, dungeon: DungeonConfig, x: int, y: int, source: str) -> bool:
         current = now_ms()
         dx = dungeon.home_x - x
         dy = dungeon.home_y - y
@@ -1669,7 +1687,9 @@ class AutomationBackend:
             if current - self.last_home_debug_log >= 5000:
                 self.last_home_debug_log = current
                 self.log(f"Home position OK ({source}). Current: {x}, {y}")
-            return
+            return False
+        self.release_attack()
+        release_modifiers()
         if dx < -dungeon.tolerance_px:
             self.nudge("left", abs(dx), source)
         elif dx > dungeon.tolerance_px:
@@ -1679,6 +1699,7 @@ class AutomationBackend:
         elif dy > dungeon.tolerance_px:
             self.nudge("down", abs(dy), source)
         self.log(f"Returning to home position ({source}). Current: {x}, {y}; Target: {dungeon.home_x}, {dungeon.home_y}")
+        return True
 
     def find_minimap_character(self, dungeon: DungeonConfig) -> Optional[dict[str, Any]]:
         if ImageGrab is None or cv2 is None or np is None:
