@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-lightweight-compact-layout-v3"
+APP_VERSION = "2026-06-15-lightweight-vertical-layout-v4"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -1927,8 +1927,8 @@ class MapleBotApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("MeowMeowBot Lightweight")
-        self.geometry("980x620")
-        self.minsize(720, 460)
+        self.geometry("520x780")
+        self.minsize(420, 620)
         self.configure(bg=UI_BG)
         self.config_data = default_config()
         self.vars: dict[str, Any] = {}
@@ -1996,34 +1996,30 @@ class MapleBotApp(tk.Tk):
         header = tk.Frame(self.root_frame, bg=UI_BG)
         header.pack(fill="x")
         title_block = tk.Frame(header, bg=UI_BG)
-        title_block.pack(side="left", fill="x", expand=True)
+        title_block.pack(fill="x")
         tk.Label(title_block, text="MEOWMEOWBOT", bg=UI_BG, fg=UI_TEXT, font=("Segoe UI Black", 18, "bold")).pack(side="left")
         tk.Label(title_block, text="LIGHT", bg=UI_BG, fg=UI_MUTED, font=("Segoe UI", 8, "bold")).pack(side="left", padx=(8, 0), pady=(0, 12))
         header_controls = tk.Frame(header, bg=UI_BG)
-        header_controls.pack(side="right")
+        header_controls.pack(fill="x", pady=(8, 0))
         self.vars["mode"] = tk.StringVar()
         ttk.Label(header_controls, text="MODE").pack(side="left", padx=(0, 6))
         ttk.Combobox(header_controls, textvariable=self.vars["mode"], values=MODE_OPTIONS, width=12, state="readonly").pack(side="left")
         self.vars["mode"].trace_add("write", lambda *_: self.on_mode_changed())
         ttk.Button(header_controls, text="START (F1)", style="Start.TButton", command=self.start_bot).pack(side="left", padx=(12, 6))
         ttk.Button(header_controls, text="STOP (F2)", style="Stop.TButton", command=self.stop_bot).pack(side="left", padx=(0, 8))
-        self.compact_button = ttk.Button(header, text="Compact", command=self.toggle_compact_mode)
-        self.compact_button.pack(side="right", padx=(8, 0))
         self.status_var = tk.StringVar(value="Stopped")
         self.timer_var = tk.StringVar(value="00:00:00")
-        ttk.Label(header_controls, textvariable=self.timer_var, font=("Consolas", 10, "bold")).pack(side="left", padx=10)
-        ttk.Label(header_controls, textvariable=self.status_var, font=("Segoe UI", 9, "bold")).pack(side="left")
+        self.compact_button = ttk.Button(header_controls, text="Compact", command=self.toggle_compact_mode)
+        self.compact_button.pack(side="right")
+        status_row = tk.Frame(header, bg=UI_BG)
+        status_row.pack(fill="x", pady=(6, 0))
+        ttk.Label(status_row, textvariable=self.timer_var, font=("Consolas", 10, "bold")).pack(side="left")
+        ttk.Label(status_row, textvariable=self.status_var, font=("Segoe UI", 9, "bold")).pack(side="left", padx=(12, 0))
 
         self.main_frame = ttk.Frame(self.root_frame)
         self.main_frame.pack(fill="both", expand=True, pady=(10, 0))
-        self.main_frame.columnconfigure(0, weight=1)
-        self.main_frame.columnconfigure(1, weight=0)
-        self.main_frame.rowconfigure(0, weight=1)
         left = ttk.Frame(self.main_frame)
-        left.grid(row=0, column=0, sticky="nsew")
-        right = ttk.Frame(self.main_frame, width=220)
-        right.grid(row=0, column=1, sticky="nsew", padx=(12, 0))
-        right.grid_propagate(False)
+        left.pack(fill="both", expand=True)
 
         self.tabs = ttk.Notebook(left)
         self.tabs.pack(fill="both", expand=True)
@@ -2033,8 +2029,9 @@ class MapleBotApp(tk.Tk):
         self.build_dungeon_tab()
         self.build_command_tab()
         self.build_log_tab()
-        right_inner = self.create_scrollable_container(right)
-        self.build_side_panel(right_inner)
+        utility = ttk.Frame(left)
+        utility.pack(fill="x", pady=(8, 0))
+        self.build_side_panel(utility)
         self.build_compact_panel()
 
     def build_module_strip(self, parent: ttk.Frame) -> None:
@@ -2175,9 +2172,9 @@ class MapleBotApp(tk.Tk):
             self.update_compact_log()
         else:
             self.compact_frame.pack_forget()
-            self.main_frame.pack(fill="both", expand=True, pady=(18, 0))
+            self.main_frame.pack(fill="both", expand=True, pady=(10, 0))
             self.compact_button.configure(text="Compact")
-            self.minsize(760, 520)
+            self.minsize(420, 620)
             if self.full_geometry_before_compact:
                 self.geometry(self.full_geometry_before_compact)
 
