@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-command-chat-cleanup-v28"
+APP_VERSION = "2026-06-15-ld-clear-input-v29"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -1110,6 +1110,17 @@ class AutomationBackend:
         self.click(input_x, input_y)
         if not self.interruptible_sleep(0.08):
             append_event_log("Lie Detector OCR aborted after input click because bot was stopped.")
+            return True
+        release_modifiers()
+        if not send_key_combo("ctrl", "a"):
+            pyautogui.hotkey("ctrl", "a")
+        time.sleep(0.05)
+        self.press("backspace", 0.02, force=True)
+        for _ in range(4):
+            self.press("backspace", 0.01, force=True)
+        append_event_log("Lie Detector input field cleared before typing OCR answer.")
+        if not self.interruptible_sleep(0.05):
+            append_event_log("Lie Detector OCR aborted after input clear because bot was stopped.")
             return True
         if self.should_abort_actions():
             append_event_log("Lie Detector OCR aborted before typing because bot was stopped.")
