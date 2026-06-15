@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-lightweight-command-no-skill-block-v23"
+APP_VERSION = "2026-06-15-lightweight-command-priority-debug-v24"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -647,6 +647,8 @@ class AutomationBackend:
         self.last_skill: dict[str, int] = {}
         self.last_detector: dict[str, int] = {}
         self.last_command = 0
+        self.last_command_block_log = 0
+        self.last_command_wait_log = 0
         self.last_home_return = 0
         self.finish_handled = False
         self.target_hwnd: Optional[int] = None
@@ -795,15 +797,16 @@ class AutomationBackend:
                     if self.run_ocr(config, current):
                         time.sleep(0.03)
                         continue
+                    self.run_command(config, current)
                     self.run_skills(config, current)
                     self.run_detectors(config, current)
                 elif config.mode == "Dungeon":
+                    self.run_command(config, current)
                     self.run_detectors(config, current)
                     combat_active = self.run_dungeon(config, current)
                     self.attack_loop_enabled = bool(config.attack_enabled and combat_active)
                     if combat_active:
                         self.run_skills(config, current)
-                self.run_command(config, current)
                 time.sleep(0.03)
         except Exception as exc:
             self.log("Bot error: " + str(exc))
@@ -992,10 +995,18 @@ class AutomationBackend:
     def run_command(self, config: BotConfig, current: int) -> None:
         if not config.command_enabled:
             return
-        if current < self.action_pause_until:
-            return
         interval = max(config.command_every_sec, 1) * 1000
         if current - self.last_command < interval:
+            if current - self.last_command_wait_log >= 15000:
+                self.last_command_wait_log = current
+                remaining = max(0, interval - (current - self.last_command))
+                append_event_log(f"Scheduled command waiting; next in {remaining}ms.")
+            return
+        if current < self.action_pause_until:
+            if current - self.last_command_block_log >= 2500:
+                self.last_command_block_log = current
+                self.log("Scheduled command due, waiting for current action pause.")
+                append_event_log(f"Scheduled command due but action pause is active for {self.action_pause_until - current}ms.")
             return
         self.last_command = current
         self.send_chat_command(config.command_text, max(config.command_step_delay_ms, 500), defocus_after=True)
