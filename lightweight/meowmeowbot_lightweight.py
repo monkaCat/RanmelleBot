@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-lightweight-scheduled-single-confirm-v21"
+APP_VERSION = "2026-06-15-lightweight-command-defocus-click-v22"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -1000,10 +1000,10 @@ class AutomationBackend:
         if current - self.last_command < interval:
             return
         self.last_command = current
-        self.send_chat_command(config.command_text, max(config.command_step_delay_ms, 500))
+        self.send_chat_command(config.command_text, max(config.command_step_delay_ms, 500), defocus_after=True)
         self.log("Scheduled command sent.")
 
-    def send_chat_command(self, command_text: str, step_delay_ms: int = 500) -> None:
+    def send_chat_command(self, command_text: str, step_delay_ms: int = 500, defocus_after: bool = False) -> None:
         command_text = " ".join(str(command_text).split())
         if not command_text:
             return
@@ -1018,10 +1018,27 @@ class AutomationBackend:
         self.press("enter", 0.055, force=True)
         append_event_log(f"Command confirmed with exactly one Enter after typing: {command_text!r}")
         release_modifiers()
+        if defocus_after:
+            time.sleep(0.25)
+            self.click_game_center("scheduled command defocus")
         time.sleep(0.18)
         self.action_pause_until = now_ms() + 1100
         self.suppress_enter_until = now_ms() + 3500
         self.command_enter_guard_until = now_ms() + 1200
+
+    def click_game_center(self, reason: str = "defocus") -> None:
+        if pyautogui is None:
+            return
+        try:
+            self.ensure_target_window()
+            if win32gui is not None and self.target_hwnd and win32gui.IsWindow(self.target_hwnd):
+                left, top, right, bottom = win32gui.GetWindowRect(self.target_hwnd)
+                x = left + max(80, (right - left) // 2)
+                y = top + max(80, (bottom - top) // 2)
+                pyautogui.click(x, y)
+                append_event_log(f"Clicked game center after {reason}: ({x}, {y}).")
+        except Exception as exc:
+            append_event_log(f"Game center click after {reason} failed: {exc}")
 
     def run_detectors(self, config: BotConfig, current: int) -> None:
         for index, detector in enumerate(config.detectors):
