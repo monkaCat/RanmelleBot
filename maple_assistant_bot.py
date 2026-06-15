@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-command-confirm-once-v34"
+APP_VERSION = "2026-06-15-scheduled-post-confirm-v35"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -1000,10 +1000,10 @@ class AutomationBackend:
         if current - self.last_command < interval:
             return
         self.last_command = current
-        self.send_chat_command(config.command_text, max(config.command_step_delay_ms, 500))
+        self.send_chat_command(config.command_text, max(config.command_step_delay_ms, 500), post_confirm_enter=True)
         self.log("Scheduled command sent.")
 
-    def send_chat_command(self, command_text: str, step_delay_ms: int = 500) -> None:
+    def send_chat_command(self, command_text: str, step_delay_ms: int = 500, post_confirm_enter: bool = False) -> None:
         command_text = " ".join(str(command_text).split())
         if not command_text:
             return
@@ -1018,6 +1018,11 @@ class AutomationBackend:
         self.press("enter", 0.055, force=True)
         append_event_log(f"Command confirmed with exactly one Enter after typing: {command_text!r}")
         release_modifiers()
+        if post_confirm_enter:
+            time.sleep(max(step_delay_ms, 650) / 1000)
+            self.ensure_target_window()
+            self.press("enter", 0.055, force=True)
+            append_event_log(f"Scheduled command post-confirm Enter sent: {command_text!r}")
         time.sleep(0.18)
         self.action_pause_until = now_ms() + 1100
         self.suppress_enter_until = now_ms() + 3500
