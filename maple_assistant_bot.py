@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-ld-clear-input-v29"
+APP_VERSION = "2026-06-15-no-esc-cleanup-v30"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -995,11 +995,8 @@ class AutomationBackend:
         self.ensure_target_window()
         self.press("enter", 0.02, force=True)
         release_modifiers()
-        time.sleep(0.14)
-        self.press("esc", 0.02, force=True)
-        release_modifiers()
-        self.action_pause_until = now_ms() + 700
-        self.suppress_enter_until = now_ms() + 2500
+        self.action_pause_until = now_ms() + 900
+        self.suppress_enter_until = now_ms() + 3000
 
     def run_detectors(self, config: BotConfig, current: int) -> None:
         for index, detector in enumerate(config.detectors):
@@ -1322,12 +1319,6 @@ class AutomationBackend:
         except Exception:
             pass
         processed_images = self.prepare_ocr_images(img)
-        if save_name.startswith("last_ld_code"):
-            for index, processed in enumerate(processed_images[:8]):
-                try:
-                    processed.save(APP_DIR / f"{Path(save_name).stem}_variant_{index}.png")
-                except Exception:
-                    pass
         candidates = []
         for processed in processed_images:
             for psm in psm_modes:
