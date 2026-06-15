@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-ld-code-cluster-v25"
+APP_VERSION = "2026-06-15-ld-ocr-preprocess-v26"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -1308,6 +1308,12 @@ class AutomationBackend:
         except Exception:
             pass
         processed_images = self.prepare_ocr_images(img)
+        if save_name.startswith("last_ld_code"):
+            for index, processed in enumerate(processed_images[:8]):
+                try:
+                    processed.save(APP_DIR / f"{Path(save_name).stem}_variant_{index}.png")
+                except Exception:
+                    pass
         candidates = []
         for processed in processed_images:
             for psm in psm_modes:
@@ -1325,22 +1331,37 @@ class AutomationBackend:
     def prepare_ocr_images(self, img: Any) -> list[Any]:
         gray = img.convert("L")
         if cv2 is None or np is None or Image is None:
-            return [gray.resize((gray.width * 4, gray.height * 4))]
+            return [gray.resize((gray.width * 6, gray.height * 6))]
         variants = []
         rgb = np.array(img.convert("RGB"))
         gray_arr = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
         blue_score = rgb[:, :, 2].astype(np.int16) - ((rgb[:, :, 0].astype(np.int16) + rgb[:, :, 1].astype(np.int16)) // 2)
-        color_mask = ((gray_arr < 245) | (blue_score > 12)).astype(np.uint8) * 255
-        color_mask = cv2.bitwise_not(color_mask)
-        color_mask = cv2.resize(color_mask, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
-        variants.append(Image.fromarray(color_mask))
-        arr = np.array(gray)
-        arr = cv2.resize(arr, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
-        variants.append(Image.fromarray(arr))
-        arr = cv2.GaussianBlur(arr, (3, 3), 0)
-        _, otsu = cv2.threshold(arr, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        ink_mask = (((gray_arr < 220) & (gray_arr > 25)) | (blue_score > 14))
+        ys, xs = np.where(ink_mask)
+        if len(xs) >= 8 and len(ys) >= 2:
+            x1 = max(0, int(xs.min()) - 2)
+            x2 = min(rgb.shape[1], int(xs.max()) + 3)
+            y1 = max(0, int(ys.min()) - 2)
+            y2 = min(rgb.shape[0], int(ys.max()) + 3)
+            rgb = rgb[y1:y2, x1:x2]
+            gray_arr = gray_arr[y1:y2, x1:x2]
+            blue_score = blue_score[y1:y2, x1:x2]
+        scale = 6
+        up_gray = cv2.resize(gray_arr, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+        sharp = cv2.addWeighted(up_gray, 1.7, cv2.GaussianBlur(up_gray, (0, 0), 1.2), -0.7, 0)
+        variants.append(Image.fromarray(sharp))
+        _, otsu = cv2.threshold(sharp, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         variants.append(Image.fromarray(otsu))
-        adaptive = cv2.adaptiveThreshold(arr, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 9)
+        for threshold in (155, 175, 195, 215):
+            _, binary = cv2.threshold(sharp, threshold, 255, cv2.THRESH_BINARY)
+            variants.append(Image.fromarray(binary))
+        blue_up = cv2.resize(blue_score, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+        gray_up = cv2.resize(gray_arr, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+        color_ink = ((gray_up < 215) | (blue_up > 14))
+        color_mask = np.full(gray_up.shape, 255, dtype=np.uint8)
+        color_mask[color_ink] = 0
+        variants.append(Image.fromarray(color_mask))
+        adaptive = cv2.adaptiveThreshold(sharp, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 35, 11)
         variants.append(Image.fromarray(adaptive))
         return variants
 
