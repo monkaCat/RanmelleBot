@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-no-esc-cleanup-v30"
+APP_VERSION = "2026-06-15-keyup-fallback-v31"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -339,6 +339,8 @@ def send_virtual_key(key: str, hold_seconds: float = 0.065) -> bool:
         time.sleep(hold_seconds)
         if send_scan(flags | KEYEVENTF_KEYUP):
             return True
+        ctypes.windll.user32.keybd_event(vk, scan, flags | KEYEVENTF_KEYUP, 0)
+        return True
 
     ctypes.windll.user32.keybd_event(vk, scan, flags, 0)
     time.sleep(hold_seconds)
