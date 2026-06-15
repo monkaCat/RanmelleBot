@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-lightweight-vertical-layout-v4"
+APP_VERSION = "2026-06-15-lightweight-stacked-layout-v5"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -1927,8 +1927,8 @@ class MapleBotApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("MeowMeowBot Lightweight")
-        self.geometry("520x780")
-        self.minsize(420, 620)
+        self.geometry("470x860")
+        self.minsize(390, 650)
         self.configure(bg=UI_BG)
         self.config_data = default_config()
         self.vars: dict[str, Any] = {}
@@ -2186,19 +2186,16 @@ class MapleBotApp(tk.Tk):
     def build_combat_tab(self) -> None:
         tab = self.create_scrollable_tab("Actions")
         attack = ttk.LabelFrame(tab, text="Farming Attack")
-        attack.pack(fill="x", pady=(0, 10))
+        attack.pack(fill="x", pady=(0, 8))
         self.vars["attack_enabled"] = tk.BooleanVar()
         self.vars["attack_key"] = tk.StringVar()
         self.vars["attack_delay_ms"] = tk.StringVar()
-        ttk.Checkbutton(attack, text="Enable attack", variable=self.vars["attack_enabled"]).grid(row=0, column=0, padx=8, pady=8, sticky="w")
-        self.grid_combo(attack, 0, 1, "Attack key", self.vars["attack_key"], KEY_OPTIONS, 12)
-        self.grid_entry(attack, 0, 3, "Attack delay (ms)", self.vars["attack_delay_ms"], 12)
+        ttk.Checkbutton(attack, text="Enable attack", variable=self.vars["attack_enabled"]).pack(anchor="w", padx=10, pady=(8, 2))
+        self.combo_row(attack, "Attack key", self.vars["attack_key"], KEY_OPTIONS, 12)
+        self.entry_row(attack, "Attack delay ms", self.vars["attack_delay_ms"], 12)
 
         skills = ttk.LabelFrame(tab, text="Skills and Buffs")
-        skills.pack(fill="both", expand=True)
-        headers = ["Active", "Name", "Key", "Interval (ms)", "Cast pause (ms)", "Taps"]
-        for col, header in enumerate(headers):
-            ttk.Label(skills, text=header, font=("Segoe UI", 9, "bold")).grid(row=0, column=col, padx=6, pady=4, sticky="w")
+        skills.pack(fill="x", pady=(0, 8))
         for idx in range(8):
             row: dict[str, Any] = {
                 "enabled": tk.BooleanVar(),
@@ -2209,19 +2206,27 @@ class MapleBotApp(tk.Tk):
                 "taps": tk.StringVar(),
             }
             self.skill_rows.append(row)
-            ttk.Checkbutton(skills, variable=row["enabled"]).grid(row=idx + 1, column=0, padx=6, pady=4)
-            ttk.Entry(skills, textvariable=row["name"], width=20).grid(row=idx + 1, column=1, padx=6, pady=4, sticky="ew")
-            ttk.Combobox(skills, textvariable=row["key"], width=12, values=KEY_OPTIONS).grid(row=idx + 1, column=2, padx=6, pady=4)
-            ttk.Entry(skills, textvariable=row["interval_ms"], width=14).grid(row=idx + 1, column=3, padx=6, pady=4)
-            ttk.Entry(skills, textvariable=row["cast_pause_ms"], width=14).grid(row=idx + 1, column=4, padx=6, pady=4)
-            ttk.Entry(skills, textvariable=row["taps"], width=7).grid(row=idx + 1, column=5, padx=6, pady=4)
-        skills.columnconfigure(1, weight=1)
+            card = ttk.LabelFrame(skills, text=f"Slot {idx + 1}")
+            card.pack(fill="x", padx=8, pady=(6, 4))
+            top = ttk.Frame(card)
+            top.pack(fill="x", padx=8, pady=(6, 2))
+            ttk.Checkbutton(top, text="Active", variable=row["enabled"]).pack(side="left")
+            ttk.Entry(top, textvariable=row["name"], width=22).pack(side="left", fill="x", expand=True, padx=(8, 0))
+            key_row = ttk.Frame(card)
+            key_row.pack(fill="x", padx=8, pady=2)
+            ttk.Label(key_row, text="Key", width=12).pack(side="left")
+            ttk.Combobox(key_row, textvariable=row["key"], width=16, values=KEY_OPTIONS).pack(side="left", fill="x", expand=True)
+            numbers = ttk.Frame(card)
+            numbers.pack(fill="x", padx=8, pady=(2, 7))
+            ttk.Label(numbers, text="Freq", width=7).pack(side="left")
+            ttk.Entry(numbers, textvariable=row["interval_ms"], width=8).pack(side="left", padx=(0, 6))
+            ttk.Label(numbers, text="Delay", width=7).pack(side="left")
+            ttk.Entry(numbers, textvariable=row["cast_pause_ms"], width=8).pack(side="left", padx=(0, 6))
+            ttk.Label(numbers, text="Taps", width=5).pack(side="left")
+            ttk.Entry(numbers, textvariable=row["taps"], width=5).pack(side="left")
 
     def build_detectors_tab(self) -> None:
         tab = self.create_scrollable_tab("Detections")
-        headers = ["Active", "Name", "Mode", "Image", "Confidence", "Action", "Custom key", "Cooldown"]
-        for col, header in enumerate(headers):
-            ttk.Label(tab, text=header, font=("Segoe UI", 9, "bold")).grid(row=0, column=col, padx=4, pady=4, sticky="w")
         for idx in range(4):
             row: dict[str, Any] = {
                 "enabled": tk.BooleanVar(),
@@ -2234,17 +2239,29 @@ class MapleBotApp(tk.Tk):
                 "cooldown_ms": tk.StringVar(),
             }
             self.detector_rows.append(row)
-            ttk.Checkbutton(tab, variable=row["enabled"]).grid(row=idx + 1, column=0, padx=4, pady=4)
-            ttk.Entry(tab, textvariable=row["name"], width=14).grid(row=idx + 1, column=1, padx=4, pady=4)
-            ttk.Combobox(tab, textvariable=row["mode"], values=MODE_OPTIONS, width=10, state="readonly").grid(row=idx + 1, column=2, padx=4, pady=4)
-            ttk.Entry(tab, textvariable=row["image"], width=28).grid(row=idx + 1, column=3, padx=4, pady=4, sticky="ew")
-            ttk.Button(tab, text="Browse", command=lambda r=row: self.pick_file(r["image"])).grid(row=idx + 1, column=4, padx=4, pady=4)
-            ttk.Entry(tab, textvariable=row["confidence"], width=8).grid(row=idx + 1, column=5, padx=4, pady=4)
-            combo = ttk.Combobox(tab, textvariable=row["action"], width=16, values=["Press Enter", "Hold Space 3s", "Click Death OK", "Click Image", "Press Custom Key", "None"], state="readonly")
-            combo.grid(row=idx + 1, column=6, padx=4, pady=4)
-            ttk.Combobox(tab, textvariable=row["custom_key"], width=10, values=KEY_OPTIONS).grid(row=idx + 1, column=7, padx=4, pady=4)
-            ttk.Entry(tab, textvariable=row["cooldown_ms"], width=9).grid(row=idx + 1, column=8, padx=4, pady=4)
-        tab.columnconfigure(3, weight=1)
+            card = ttk.LabelFrame(tab, text=f"Detector {idx + 1}")
+            card.pack(fill="x", pady=(0, 8))
+            ttk.Checkbutton(card, text="Active", variable=row["enabled"]).pack(anchor="w", padx=10, pady=(7, 2))
+            self.entry_row(card, "Name", row["name"], 18)
+            self.combo_row(card, "Mode", row["mode"], MODE_OPTIONS, 12)
+            image_row = ttk.Frame(card)
+            image_row.pack(fill="x", padx=10, pady=5)
+            ttk.Label(image_row, text="Image", width=16).pack(side="left")
+            ttk.Entry(image_row, textvariable=row["image"]).pack(side="left", fill="x", expand=True)
+            ttk.Button(image_row, text="Browse", command=lambda r=row: self.pick_file(r["image"])).pack(side="left", padx=(6, 0))
+            self.entry_row(card, "Confidence", row["confidence"], 8)
+            action_row = ttk.Frame(card)
+            action_row.pack(fill="x", padx=10, pady=5)
+            ttk.Label(action_row, text="Action", width=16).pack(side="left")
+            ttk.Combobox(
+                action_row,
+                textvariable=row["action"],
+                width=18,
+                values=["Press Enter", "Hold Space 3s", "Click Death OK", "Click Image", "Press Custom Key", "None"],
+                state="readonly",
+            ).pack(side="left", fill="x", expand=True)
+            self.combo_row(card, "Custom key", row["custom_key"], KEY_OPTIONS, 12)
+            self.entry_row(card, "Cooldown ms", row["cooldown_ms"], 9)
 
     def build_ocr_tab(self) -> None:
         tab = self.create_scrollable_tab("Lie Detector")
@@ -2325,13 +2342,9 @@ class MapleBotApp(tk.Tk):
 
         flow = ttk.LabelFrame(tab, text="Dungeon flow")
         flow.pack(fill="x", pady=(0, 8))
+        self.combo_row(flow, "Role", self.vars["dungeon_role"], ["Leader", "Leecher"], 14)
+        self.combo_row(flow, "Drops", self.vars["dungeon_drop_option"], ["4 drops", "8 drops", "12 drops", "24 drops", "Custom Drops"], 16)
         self.inline_entries(flow, [("Custom coins", "dungeon_custom_coins")])
-        row = ttk.Frame(flow)
-        row.pack(fill="x", padx=12, pady=8)
-        ttk.Label(row, text="Role").pack(side="left", padx=(0, 6))
-        ttk.Combobox(row, textvariable=self.vars["dungeon_role"], values=["Leader", "Leecher"], width=12, state="readonly").pack(side="left", padx=(0, 18))
-        ttk.Label(row, text="Drops").pack(side="left", padx=(0, 6))
-        ttk.Combobox(row, textvariable=self.vars["dungeon_drop_option"], values=["4 drops", "8 drops", "12 drops", "24 drops", "Custom Drops"], width=16, state="readonly").pack(side="left", padx=(0, 18))
 
         images = ttk.LabelFrame(tab, text="Images")
         images.pack(fill="x", pady=5)
@@ -2459,22 +2472,22 @@ class MapleBotApp(tk.Tk):
 
     def path_row(self, parent: ttk.Frame, label: str, variable: tk.StringVar) -> None:
         frame = ttk.Frame(parent)
-        frame.pack(fill="x", padx=12, pady=8)
-        ttk.Label(frame, text=label, width=22).pack(side="left")
+        frame.pack(fill="x", padx=10, pady=6)
+        ttk.Label(frame, text=label, width=16).pack(side="left")
         ttk.Entry(frame, textvariable=variable).pack(side="left", fill="x", expand=True)
         ttk.Button(frame, text="Browse", command=lambda: self.pick_file(variable)).pack(side="left", padx=(6, 0))
 
     def inline_entries(self, parent: ttk.Frame, items: list[tuple[str, str]]) -> None:
         frame = ttk.Frame(parent)
-        frame.pack(fill="x", padx=12, pady=8)
-        max_pairs_per_row = 3
+        frame.pack(fill="x", padx=10, pady=6)
+        max_pairs_per_row = 1
         for index, (label, key) in enumerate(items):
             row = index // max_pairs_per_row
             col = (index % max_pairs_per_row) * 2
-            ttk.Label(frame, text=label).grid(row=row, column=col, padx=(0, 6), pady=5, sticky="w")
-            ttk.Entry(frame, textvariable=self.vars[key], width=10).grid(row=row, column=col + 1, padx=(0, 18), pady=5, sticky="w")
+            ttk.Label(frame, text=label, width=18).grid(row=row, column=col, padx=(0, 6), pady=4, sticky="w")
+            ttk.Entry(frame, textvariable=self.vars[key], width=12).grid(row=row, column=col + 1, padx=(0, 0), pady=4, sticky="ew")
         for col in range(max_pairs_per_row * 2):
-            frame.columnconfigure(col, weight=0)
+            frame.columnconfigure(col, weight=1 if col % 2 else 0)
 
     def pick_file(self, variable: tk.StringVar) -> None:
         path = filedialog.askopenfilename(filetypes=[("Images and executables", "*.png *.jpg *.jpeg *.bmp *.exe"), ("All files", "*.*")])
