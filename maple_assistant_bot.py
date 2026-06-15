@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-fast-ld-command-pauses-v33"
+APP_VERSION = "2026-06-15-command-confirm-once-v34"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -668,6 +668,7 @@ class AutomationBackend:
         self.last_home_debug_log = 0
         self.action_pause_until = 0
         self.suppress_enter_until = 0
+        self.command_enter_guard_until = 0
         self.last_minimap_position: Optional[tuple[int, int]] = None
         self.dungeon_entry_started = False
         self.dungeon_cycle_phase = "attack"
@@ -690,6 +691,7 @@ class AutomationBackend:
         self.ocr_active_until = 0
         self.ocr_pause_until = 0
         self.suppress_enter_until = 0
+        self.command_enter_guard_until = 0
         self.last_ocr_popup = None
         self.release_attack()
         self.running = True
@@ -820,6 +822,10 @@ class AutomationBackend:
             if key == "enter" and not force and now_ms() < self.suppress_enter_until:
                 self.log("Enter suppressed to avoid reopening chat.")
                 append_event_log("Suppressed non-forced Enter while command/input guard was active.")
+                return
+            if key == "enter" and now_ms() < self.command_enter_guard_until:
+                self.log("Enter suppressed after command confirm.")
+                append_event_log("Suppressed Enter after command confirm guard.")
                 return
             self.ensure_target_window()
             if not send_virtual_key(key, hold_seconds):
@@ -1002,6 +1008,7 @@ class AutomationBackend:
         if not command_text:
             return
         self.pause_attack_for_input(max(step_delay_ms * 3, 900))
+        self.command_enter_guard_until = 0
         release_modifiers()
         self.press("enter", 0.055, force=True)
         time.sleep(max(step_delay_ms, 350) / 1000)
@@ -1009,10 +1016,12 @@ class AutomationBackend:
         time.sleep(max(step_delay_ms, 450) / 1000)
         self.ensure_target_window()
         self.press("enter", 0.055, force=True)
+        append_event_log(f"Command confirmed with exactly one Enter after typing: {command_text!r}")
         release_modifiers()
         time.sleep(0.18)
         self.action_pause_until = now_ms() + 1100
         self.suppress_enter_until = now_ms() + 3500
+        self.command_enter_guard_until = now_ms() + 1200
 
     def run_detectors(self, config: BotConfig, current: int) -> None:
         for index, detector in enumerate(config.detectors):
