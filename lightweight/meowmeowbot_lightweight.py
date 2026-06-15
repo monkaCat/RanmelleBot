@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-lightweight-hotkey-thread-v12"
+APP_VERSION = "2026-06-15-lightweight-command-chat-cleanup-v13"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -995,8 +995,11 @@ class AutomationBackend:
         self.ensure_target_window()
         self.press("enter", 0.02, force=True)
         release_modifiers()
-        self.action_pause_until = now_ms() + 500
-        self.suppress_enter_until = now_ms() + 1800
+        time.sleep(0.14)
+        self.press("esc", 0.02, force=True)
+        release_modifiers()
+        self.action_pause_until = now_ms() + 700
+        self.suppress_enter_until = now_ms() + 2500
 
     def run_detectors(self, config: BotConfig, current: int) -> None:
         for index, detector in enumerate(config.detectors):
