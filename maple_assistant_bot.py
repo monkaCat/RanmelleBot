@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-low-latency-attack-v13"
+APP_VERSION = "2026-06-15-dedicated-attack-loop-v14"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -635,6 +635,9 @@ class AutomationBackend:
         self.stop_event = threading.Event()
         self.running = False
         self.thread: Optional[threading.Thread] = None
+        self.attack_thread: Optional[threading.Thread] = None
+        self.attack_loop_enabled = False
+        self.attack_lock = threading.Lock()
         self.last_skill: dict[str, int] = {}
         self.last_detector: dict[str, int] = {}
         self.last_command = 0
@@ -678,13 +681,17 @@ class AutomationBackend:
         self.last_ocr_popup = None
         self.release_attack()
         self.running = True
+        self.attack_loop_enabled = config.attack_enabled
         self.thread = threading.Thread(target=self.loop, args=(config,), daemon=True)
         self.thread.start()
+        self.attack_thread = threading.Thread(target=self.attack_loop, args=(config,), daemon=True)
+        self.attack_thread.start()
         self.log(f"Bot started. Version: {APP_VERSION}. Keyboard layout: {config.keyboard_layout}.")
         append_event_log(f"Bot started. Version={APP_VERSION}")
 
     def stop(self) -> None:
         self.stop_event.set()
+        self.attack_loop_enabled = False
         self.release_attack()
         self.ocr_active_until = 0
         self.action_pause_until = 0
@@ -708,7 +715,7 @@ class AutomationBackend:
         if missing:
             raise RuntimeError("Missing dependencies: " + ", ".join(missing))
         pyautogui.FAILSAFE = True
-        pyautogui.PAUSE = 0.02
+        pyautogui.PAUSE = 0.0
 
     def focus_game_window(self, title_part: str) -> int:
         if not title_part:
@@ -770,18 +777,18 @@ class AutomationBackend:
             while not self.stop_event.is_set():
                 current = now_ms()
                 if config.mode == "Farming":
+                    self.attack_loop_enabled = config.attack_enabled
                     if self.run_ocr(config, current):
                         time.sleep(0.03)
                         continue
-                    self.run_attack(config, current)
                     self.run_skills(config, current)
                     self.run_command(config, current)
                     self.run_detectors(config, current)
                 elif config.mode == "Dungeon":
                     self.run_detectors(config, current)
                     combat_active = self.run_dungeon(config, current)
+                    self.attack_loop_enabled = bool(config.attack_enabled and combat_active)
                     if combat_active:
-                        self.run_attack(config, current)
                         self.run_skills(config, current)
                 time.sleep(0.03)
         except Exception as exc:
@@ -792,6 +799,7 @@ class AutomationBackend:
             append_event_log(details)
         finally:
             self.release_attack()
+            self.attack_loop_enabled = False
             self.running = False
 
     def press(self, key: str, hold_seconds: float = 0.075) -> None:
@@ -861,6 +869,35 @@ class AutomationBackend:
         self.attack_held = False
         self.attack_key_held = ""
 
+    def attack_loop(self, config: BotConfig) -> None:
+        key = normalize_key(config.attack_key)
+        if not key:
+            return
+        append_event_log(f"Dedicated attack loop started. key={key} delay_ms={config.attack_delay_ms}")
+        while not self.stop_event.is_set():
+            current = now_ms()
+            delay_ms = max(min(config.attack_delay_ms, 1000), 10)
+            if not self.attack_loop_enabled or current < self.action_pause_until:
+                self.release_attack()
+                time.sleep(0.01)
+                continue
+            try:
+                if not self.target_hwnd:
+                    self.ensure_target_window()
+                with self.attack_lock:
+                    if not send_virtual_key(key, 0.001):
+                        pyautogui.press(key)
+                if current - self.last_attack_log >= 5000:
+                    self.last_attack_log = current
+                    self.log(f"Attack loop: {key} every {delay_ms}ms")
+            except Exception as exc:
+                if current - self.last_focus_error_log > 5000:
+                    self.last_focus_error_log = current
+                    self.log(f"Attack loop warning: {exc}")
+            time.sleep(delay_ms / 1000)
+        self.release_attack()
+        append_event_log("Dedicated attack loop stopped.")
+
     def run_attack(self, config: BotConfig, current: int) -> None:
         if not config.attack_enabled:
             self.release_attack()
@@ -893,7 +930,7 @@ class AutomationBackend:
             if current - self.last_skill.get(ident, 0) >= max(skill.interval_ms, 20):
                 pause_ms = max(skill.cast_pause_ms, 0)
                 taps = max(skill.taps, 1)
-                self.action_pause_until = now_ms() + pause_ms + 80
+                self.action_pause_until = now_ms() + min(max(pause_ms, 40), 120)
                 self.release_attack()
                 release_modifiers()
                 time.sleep(0.03)
