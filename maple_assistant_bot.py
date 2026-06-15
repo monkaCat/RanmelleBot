@@ -69,7 +69,8 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-skill-first-command-v40"
+APP_VERSION = "2026-06-15-window-bounded-vision-v41"
+MAX_TEMPLATE_MATCH_CELLS = 35_000_000
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -788,6 +789,21 @@ class AutomationBackend:
                 return
             time.sleep(0.04)
 
+    def target_window_region(self) -> Optional[tuple[int, int, int, int]]:
+        if win32gui is None:
+            return None
+        try:
+            if not self.target_hwnd or not win32gui.IsWindow(self.target_hwnd):
+                self.target_hwnd = self.focus_game_window(REQUIRED_GAME_WINDOW)
+            left, top, right, bottom = win32gui.GetWindowRect(self.target_hwnd)
+        except Exception:
+            return None
+        width = max(0, right - left)
+        height = max(0, bottom - top)
+        if width < 50 or height < 50:
+            return None
+        return (max(0, left), max(0, top), width, height)
+
     def loop(self, config: BotConfig) -> None:
         try:
             while not self.stop_event.is_set():
@@ -1489,9 +1505,10 @@ class AutomationBackend:
     def find_ocr_popup(self, ocr: OcrConfig) -> Optional[dict[str, Any]]:
         if not ocr.popup_image:
             return None
+        region = self.target_window_region()
         if not ocr.cookbot_label_preset:
-            return self.find_image(ocr.popup_image, ocr.popup_confidence)
-        candidates = self.find_image_candidates(ocr.popup_image, ocr.popup_confidence, limit=20)
+            return self.find_image(ocr.popup_image, ocr.popup_confidence, region=region)
+        candidates = self.find_image_candidates(ocr.popup_image, ocr.popup_confidence, region=region, limit=20)
         for candidate in candidates:
             self.last_ocr_popup = candidate
             if self.is_valid_cookbot_code_crop(candidate):
@@ -1973,6 +1990,8 @@ class AutomationBackend:
             return None
         if ImageGrab is None or cv2 is None or np is None:
             return None
+        if region is None:
+            region = self.target_window_region()
         offset_x = 0
         offset_y = 0
         if region:
@@ -1985,6 +2004,14 @@ class AutomationBackend:
         if template is None:
             return None
         h, w = template.shape[:2]
+        sh, sw = screen.shape[:2]
+        if h > sh or w > sw:
+            append_event_log(f"Template skipped because it is larger than search area: template=({w}, {h}) search=({sw}, {sh}) path={template_path}")
+            return None
+        cells = (sw - w + 1) * (sh - h + 1)
+        if cells > MAX_TEMPLATE_MATCH_CELLS:
+            append_event_log(f"Template search skipped to avoid OpenCV OOM: cells={cells} template=({w}, {h}) search=({sw}, {sh}) path={template_path}")
+            return None
         result = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, max_loc = cv2.minMaxLoc(result)
         best_val = float(max_val)
@@ -2020,6 +2047,8 @@ class AutomationBackend:
             return []
         if ImageGrab is None or cv2 is None or np is None:
             return []
+        if region is None:
+            region = self.target_window_region()
         offset_x = 0
         offset_y = 0
         if region:
@@ -2032,6 +2061,14 @@ class AutomationBackend:
         if template is None:
             return []
         h, w = template.shape[:2]
+        sh, sw = screen.shape[:2]
+        if h > sh or w > sw:
+            append_event_log(f"Template candidates skipped because template is larger than search area: template=({w}, {h}) search=({sw}, {sh}) path={template_path}")
+            return []
+        cells = (sw - w + 1) * (sh - h + 1)
+        if cells > MAX_TEMPLATE_MATCH_CELLS:
+            append_event_log(f"Template candidates skipped to avoid OpenCV OOM: cells={cells} template=({w}, {h}) search=({sw}, {sh}) path={template_path}")
+            return []
         maps = [cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)]
         gray_screen = cv2.cvtColor(screen, cv2.COLOR_BGR2GRAY)
         gray_template = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
