@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-lightweight-command-skill-guard-v17"
+APP_VERSION = "2026-06-15-lightweight-fast-ld-command-pauses-v18"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -1003,15 +1003,16 @@ class AutomationBackend:
             return
         self.pause_attack_for_input(max(step_delay_ms * 3, 900))
         release_modifiers()
-        self.press("enter", 0.02, force=True)
-        time.sleep(max(step_delay_ms, 250) / 1000)
+        self.press("enter", 0.055, force=True)
+        time.sleep(max(step_delay_ms, 350) / 1000)
         self.type_text(command_text)
-        time.sleep(max(step_delay_ms, 250) / 1000)
+        time.sleep(max(step_delay_ms, 450) / 1000)
         self.ensure_target_window()
-        self.press("enter", 0.02, force=True)
+        self.press("enter", 0.055, force=True)
         release_modifiers()
-        self.action_pause_until = now_ms() + 900
-        self.suppress_enter_until = now_ms() + 3000
+        time.sleep(0.18)
+        self.action_pause_until = now_ms() + 1100
+        self.suppress_enter_until = now_ms() + 3500
 
     def run_detectors(self, config: BotConfig, current: int) -> None:
         for index, detector in enumerate(config.detectors):
@@ -1244,7 +1245,7 @@ class AutomationBackend:
             y,
             width,
             height,
-            psm_modes=("7", "8", "13"),
+            psm_modes=("7",),
             save_name="last_ld_code_crop.png",
         )
 
@@ -1341,7 +1342,11 @@ class AutomationBackend:
         for processed in processed_images:
             for psm in psm_modes:
                 config = f"--oem 3 --psm {psm} -c tessedit_char_whitelist={OCR_ALLOWED_CHARS}"
-                candidates.append(clean_ocr_text(pytesseract.image_to_string(processed, config=config)))
+                candidate = clean_ocr_text(pytesseract.image_to_string(processed, config=config))
+                candidates.append(candidate)
+                if is_valid_ld_code(candidate):
+                    append_event_log(f"OCR early valid candidate from {save_name}: {candidate}")
+                    return candidate
         append_event_log(f"OCR candidates from {save_name}: {candidates}")
         valid = [candidate for candidate in candidates if is_valid_ld_code(candidate)]
         if valid:
@@ -1372,10 +1377,10 @@ class AutomationBackend:
         scale = 6
         up_gray = cv2.resize(gray_arr, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
         sharp = cv2.addWeighted(up_gray, 1.7, cv2.GaussianBlur(up_gray, (0, 0), 1.2), -0.7, 0)
-        variants.append(Image.fromarray(sharp))
         _, otsu = cv2.threshold(sharp, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         variants.append(Image.fromarray(otsu))
-        for threshold in (155, 175, 195, 215):
+        variants.append(Image.fromarray(sharp))
+        for threshold in (175, 205):
             _, binary = cv2.threshold(sharp, threshold, 255, cv2.THRESH_BINARY)
             variants.append(Image.fromarray(binary))
         blue_up = cv2.resize(blue_score, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
@@ -1384,8 +1389,6 @@ class AutomationBackend:
         color_mask = np.full(gray_up.shape, 255, dtype=np.uint8)
         color_mask[color_ink] = 0
         variants.append(Image.fromarray(color_mask))
-        adaptive = cv2.adaptiveThreshold(sharp, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 35, 11)
-        variants.append(Image.fromarray(adaptive))
         return variants
 
     def run_dungeon(self, config: BotConfig, current: int) -> bool:
