@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-keyup-fallback-v31"
+APP_VERSION = "2026-06-15-command-skill-guard-v32"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -972,10 +972,23 @@ class AutomationBackend:
                 self.log(f"Used {skill.name}. ({taps} tap{'s' if taps != 1 else ''})")
                 time.sleep(pause_ms / 1000)
 
+    def skill_due_soon(self, config: BotConfig, current: int, window_ms: int = 1500) -> bool:
+        for index, skill in enumerate(config.skills):
+            if not skill.enabled or not skill.key:
+                continue
+            ident = f"skill_{index}"
+            interval = max(skill.interval_ms, 20)
+            elapsed = current - self.last_skill.get(ident, 0)
+            if elapsed >= interval or interval - elapsed <= window_ms:
+                return True
+        return False
+
     def run_command(self, config: BotConfig, current: int) -> None:
         if not config.command_enabled:
             return
         if current < self.action_pause_until:
+            return
+        if self.skill_due_soon(config, current, 1800):
             return
         interval = max(config.command_every_sec, 1) * 1000
         if current - self.last_command < interval:
@@ -1025,6 +1038,9 @@ class AutomationBackend:
             self.hold_key("space", 3.0)
             self.log("Detector handled: held Space for 3 seconds.")
         elif action == "Press Enter":
+            if self.skill_due_soon(config, now_ms(), 1800):
+                self.log(f"{detector.name} Enter delayed because a skill/buff is due.")
+                return
             self.press("enter")
         elif action == "Click Death OK":
             self.handle_death_dialog(config.dungeon)
