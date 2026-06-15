@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-lightweight-stacked-layout-v5"
+APP_VERSION = "2026-06-15-lightweight-utility-scroll-v6"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -2029,9 +2029,10 @@ class MapleBotApp(tk.Tk):
         self.build_dungeon_tab()
         self.build_command_tab()
         self.build_log_tab()
-        utility = ttk.Frame(left)
+        utility = ttk.LabelFrame(left, text="Controls")
         utility.pack(fill="x", pady=(8, 0))
-        self.build_side_panel(utility)
+        utility_inner = self.create_scrollable_container(utility, height=190)
+        self.build_side_panel(utility_inner)
         self.build_compact_panel()
 
     def build_module_strip(self, parent: ttk.Frame) -> None:
@@ -2049,8 +2050,10 @@ class MapleBotApp(tk.Tk):
         tk.Label(text, text=subtitle, bg=UI_PANEL, fg=UI_MUTED, font=("Segoe UI", 7), anchor="w").pack(fill="x", pady=(2, 0))
         return card
 
-    def create_scrollable_container(self, parent: ttk.Frame) -> ttk.Frame:
+    def create_scrollable_container(self, parent: ttk.Frame, height: Optional[int] = None) -> ttk.Frame:
         canvas = tk.Canvas(parent, bg=UI_BG, highlightthickness=0, borderwidth=0)
+        if height is not None:
+            canvas.configure(height=height)
         scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
         inner = ttk.Frame(canvas)
         window_id = canvas.create_window((0, 0), window=inner, anchor="nw")
