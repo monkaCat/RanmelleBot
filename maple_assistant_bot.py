@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-dungeon-input-attack-pause-v16"
+APP_VERSION = "2026-06-15-ld-hard-attack-pause-v17"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -1036,6 +1036,7 @@ class AutomationBackend:
         pause_ms = settle_ms + max(ocr.retry_delay_ms, 1500) + max(ocr.result_delay_ms, 500) + 1500
         self.ocr_active_until = now_ms() + pause_ms
         self.action_pause_until = self.ocr_active_until
+        self.attack_loop_enabled = False
         self.release_attack()
         release_modifiers()
         self.park_mouse_for_ocr(ocr)
