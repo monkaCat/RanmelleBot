@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-dungeon-home-cycle-v20"
+APP_VERSION = "2026-06-15-clean-sidepanel-v21"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -2094,8 +2094,6 @@ class MapleBotApp(tk.Tk):
         return inner
 
     def build_side_panel(self, parent: ttk.Frame) -> None:
-        self.bind_card = self.info_card(parent, "WINDOW BINDING", [("TARGET", "Ranmelle"), ("STATUS", "Required")], UI_CYAN)
-        self.mode_card = self.info_card(parent, "ACTIVE PROFILE", [("MODE", "Farming"), ("DUNGEON", "Auto")], UI_PINK)
         self.build_cursor_card(parent)
         ttk.Label(parent, text="CONTROL CENTER", font=("Segoe UI", 11, "bold")).pack(pady=(8, 12))
         ttk.Button(parent, text="START BOT", style="Start.TButton", command=self.start_bot).pack(fill="x", pady=(0, 10))
@@ -2106,13 +2104,13 @@ class MapleBotApp(tk.Tk):
         self.vars["mouse_hotkey"] = tk.StringVar()
         self.vars["keyboard_layout"] = tk.StringVar()
         self.vars["game_window"] = tk.StringVar()
+        self.vars["game_window"].set(REQUIRED_GAME_WINDOW)
         self.combo_row(parent, "Keyboard layout", self.vars["keyboard_layout"], KEYBOARD_LAYOUTS)
         self.combo_row(parent, "Start hotkey", self.vars["start_hotkey"], KEY_OPTIONS)
         self.combo_row(parent, "Stop hotkey", self.vars["stop_hotkey"], KEY_OPTIONS)
         self.combo_row(parent, "Cursor toggle", self.vars["mouse_hotkey"], KEY_OPTIONS)
         self.hotkey_card = self.info_card(parent, "HOTKEYS", [("START", "F1"), ("STOP", "F2"), ("CURSOR", "F3")], UI_ORANGE)
         ttk.Separator(parent).pack(fill="x", pady=12)
-        self.entry_row(parent, "Required window", self.vars["game_window"])
         ttk.Button(parent, text="LOAD CONFIG", style="Accent.TButton", command=self.load_config_dialog).pack(fill="x", pady=(18, 8))
         ttk.Button(parent, text="SAVE CONFIG", style="Accent.TButton", command=self.save_config_dialog).pack(fill="x", pady=8)
         ttk.Button(parent, text="SAVE DEFAULT", command=lambda: self.save_config(DEFAULT_CONFIG)).pack(fill="x", pady=8)

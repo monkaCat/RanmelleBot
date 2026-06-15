@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-lightweight-home-cycle-v2"
+APP_VERSION = "2026-06-15-lightweight-compact-layout-v3"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -2005,6 +2005,8 @@ class MapleBotApp(tk.Tk):
         ttk.Label(header_controls, text="MODE").pack(side="left", padx=(0, 6))
         ttk.Combobox(header_controls, textvariable=self.vars["mode"], values=MODE_OPTIONS, width=12, state="readonly").pack(side="left")
         self.vars["mode"].trace_add("write", lambda *_: self.on_mode_changed())
+        ttk.Button(header_controls, text="START (F1)", style="Start.TButton", command=self.start_bot).pack(side="left", padx=(12, 6))
+        ttk.Button(header_controls, text="STOP (F2)", style="Stop.TButton", command=self.stop_bot).pack(side="left", padx=(0, 8))
         self.compact_button = ttk.Button(header, text="Compact", command=self.toggle_compact_mode)
         self.compact_button.pack(side="right", padx=(8, 0))
         self.status_var = tk.StringVar(value="Stopped")
@@ -2023,7 +2025,6 @@ class MapleBotApp(tk.Tk):
         right.grid(row=0, column=1, sticky="nsew", padx=(12, 0))
         right.grid_propagate(False)
 
-        self.build_module_strip(left)
         self.tabs = ttk.Notebook(left)
         self.tabs.pack(fill="both", expand=True)
         self.build_combat_tab()
@@ -2089,25 +2090,19 @@ class MapleBotApp(tk.Tk):
         return inner
 
     def build_side_panel(self, parent: ttk.Frame) -> None:
-        self.bind_card = self.info_card(parent, "WINDOW BINDING", [("TARGET", "Ranmelle"), ("STATUS", "Required")], UI_CYAN)
-        self.mode_card = self.info_card(parent, "ACTIVE PROFILE", [("MODE", "Farming"), ("DUNGEON", "Auto")], UI_PINK)
         self.build_cursor_card(parent)
-        ttk.Label(parent, text="CONTROL", font=("Segoe UI", 9, "bold")).pack(pady=(6, 6))
-        ttk.Button(parent, text="START", style="Start.TButton", command=self.start_bot).pack(fill="x", pady=(0, 5))
-        ttk.Button(parent, text="STOP", style="Stop.TButton", command=self.stop_bot).pack(fill="x", pady=(0, 6))
-        ttk.Separator(parent).pack(fill="x", pady=8)
         self.vars["start_hotkey"] = tk.StringVar()
         self.vars["stop_hotkey"] = tk.StringVar()
         self.vars["mouse_hotkey"] = tk.StringVar()
         self.vars["keyboard_layout"] = tk.StringVar()
         self.vars["game_window"] = tk.StringVar()
+        self.vars["game_window"].set(REQUIRED_GAME_WINDOW)
         self.combo_row(parent, "Keyboard layout", self.vars["keyboard_layout"], KEYBOARD_LAYOUTS)
         self.combo_row(parent, "Start hotkey", self.vars["start_hotkey"], KEY_OPTIONS)
         self.combo_row(parent, "Stop hotkey", self.vars["stop_hotkey"], KEY_OPTIONS)
         self.combo_row(parent, "Cursor toggle", self.vars["mouse_hotkey"], KEY_OPTIONS)
         self.hotkey_card = self.info_card(parent, "HOTKEYS", [("START", "F1"), ("STOP", "F2"), ("CURSOR", "F3")], UI_ORANGE)
         ttk.Separator(parent).pack(fill="x", pady=8)
-        self.entry_row(parent, "Required window", self.vars["game_window"])
         ttk.Button(parent, text="LOAD", style="Accent.TButton", command=self.load_config_dialog).pack(fill="x", pady=(8, 4))
         ttk.Button(parent, text="SAVE", style="Accent.TButton", command=self.save_config_dialog).pack(fill="x", pady=4)
         ttk.Button(parent, text="SAVE DEFAULT", command=lambda: self.save_config(DEFAULT_CONFIG)).pack(fill="x", pady=4)
