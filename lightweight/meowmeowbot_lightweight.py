@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-lightweight-command-enter-fix-v7"
+APP_VERSION = "2026-06-15-lightweight-enter-suppress-v8"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -661,6 +661,7 @@ class AutomationBackend:
         self.last_dungeon_gate_log = 0
         self.last_home_debug_log = 0
         self.action_pause_until = 0
+        self.suppress_enter_until = 0
         self.last_minimap_position: Optional[tuple[int, int]] = None
         self.dungeon_entry_started = False
         self.dungeon_cycle_phase = "attack"
@@ -682,6 +683,7 @@ class AutomationBackend:
         self.dungeon_phase_until = 0
         self.ocr_active_until = 0
         self.ocr_pause_until = 0
+        self.suppress_enter_until = 0
         self.last_ocr_popup = None
         self.release_attack()
         self.running = True
@@ -806,9 +808,13 @@ class AutomationBackend:
             self.attack_loop_enabled = False
             self.running = False
 
-    def press(self, key: str, hold_seconds: float = 0.075) -> None:
+    def press(self, key: str, hold_seconds: float = 0.075, force: bool = False) -> None:
         key = normalize_key(key)
         if key:
+            if key == "enter" and not force and now_ms() < self.suppress_enter_until:
+                self.log("Enter suppressed to avoid reopening chat.")
+                append_event_log("Suppressed non-forced Enter while command/input guard was active.")
+                return
             self.ensure_target_window()
             if not send_virtual_key(key, hold_seconds):
                 pyautogui.keyDown(key)
@@ -978,14 +984,15 @@ class AutomationBackend:
             return
         self.pause_attack_for_input(max(step_delay_ms * 3, 900))
         release_modifiers()
-        self.press("enter", 0.02)
+        self.press("enter", 0.02, force=True)
         time.sleep(max(step_delay_ms, 250) / 1000)
         self.type_text(command_text)
         time.sleep(max(step_delay_ms, 250) / 1000)
         self.ensure_target_window()
-        self.press("enter", 0.02)
+        self.press("enter", 0.02, force=True)
         release_modifiers()
-        self.action_pause_until = now_ms() + 250
+        self.action_pause_until = now_ms() + 500
+        self.suppress_enter_until = now_ms() + 1800
 
     def run_detectors(self, config: BotConfig, current: int) -> None:
         for index, detector in enumerate(config.detectors):
@@ -1101,14 +1108,15 @@ class AutomationBackend:
             append_event_log("Lie Detector OCR aborted before typing because bot was stopped.")
             return True
         self.type_text(text)
-        self.press("enter")
+        self.press("enter", force=True)
         if not self.interruptible_sleep(0.08):
             append_event_log("Lie Detector OCR aborted after first Enter because bot was stopped.")
             return True
         if self.should_abort_actions():
             append_event_log("Lie Detector OCR aborted before second Enter because bot was stopped.")
             return True
-        self.press("enter")
+        self.press("enter", force=True)
+        self.suppress_enter_until = now_ms() + 1800
         self.log(f"Lie Detector answered: {text} (Enter x2)")
         append_event_log(f"Lie Detector answered text={text}; clicked input=({input_x}, {input_y}); pressed Enter twice.")
         if self.should_abort_actions():
@@ -1164,14 +1172,16 @@ class AutomationBackend:
             self.ocr_last_answer = ""
             self.ocr_attempt_count = 0
             self.ocr_failure_count = 0
-            self.press("enter")
+            self.press("enter", force=True)
+            self.suppress_enter_until = now_ms() + 1800
             self.log("Lie Detector result: passed.")
             append_event_log(f"Lie Detector result classified as passed. raw={result!r}")
             return
         if failed_hit:
             self.ocr_failure_count += 1
             self.log(f"Lie Detector result: failed ({self.ocr_failure_count}/{ocr.max_failures}).")
-            self.press("enter")
+            self.press("enter", force=True)
+            self.suppress_enter_until = now_ms() + 1800
             append_event_log(f"Lie Detector result classified as failed. raw={result!r}")
             if self.ocr_failure_count >= max(ocr.max_failures, 1):
                 self.log("OCR failsafe stopped the bot after repeated failed bot checks.")
@@ -1604,13 +1614,13 @@ class AutomationBackend:
         for _ in range(option_index):
             self.press("down")
             time.sleep(0.08)
-        self.press("enter")
+        self.press("enter", force=True)
         self.log(f"Dungeon option selected: {dungeon.drop_option}")
         if dungeon.drop_option == "Custom Drops":
             self.pause_attack_for_input(2500)
             time.sleep(0.45)
             self.type_text(str(max(dungeon.custom_coins, 1)))
-            self.press("enter")
+            self.press("enter", force=True)
             self.log(f"Custom dungeon coins entered: {dungeon.custom_coins}")
         if dungeon.dialog_steps.strip() == LEGACY_DUNGEON_DIALOG_STEPS:
             self.log("Skipped legacy dungeon Enter step.")
@@ -1642,7 +1652,7 @@ class AutomationBackend:
                 x_text, _, y_text = value.partition(",")
                 self.click(parse_int(x_text), parse_int(y_text))
             elif kind == "enter":
-                self.press("enter")
+                self.press("enter", force=True)
             self.log(f"Dialog step: {step}")
 
     def return_to_home(self, dungeon: DungeonConfig) -> bool:
