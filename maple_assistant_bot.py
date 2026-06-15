@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-ld-strict-ocr-v24"
+APP_VERSION = "2026-06-15-ld-code-cluster-v25"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -1492,31 +1492,68 @@ class AutomationBackend:
         text_mask[:, panel_right:] = False
         text_mask[:, :2] = False
 
+        def text_column_bounds(mask: Any) -> Optional[tuple[int, int]]:
+            col_counts = mask.sum(axis=0)
+            active_cols = np.where(col_counts > 0)[0]
+            if not len(active_cols):
+                return None
+            clusters: list[tuple[int, int, int]] = []
+            start = int(active_cols[0])
+            previous = start
+            for col in active_cols[1:]:
+                col = int(col)
+                if col <= previous + 3:
+                    previous = col
+                    continue
+                ink = int(col_counts[start:previous + 1].sum())
+                clusters.append((start, previous, ink))
+                start = col
+                previous = col
+            clusters.append((start, previous, int(col_counts[start:previous + 1].sum())))
+            usable = [(start, end, ink) for start, end, ink in clusters if 20 <= end - start + 1 <= 190 and ink >= 18]
+            if not usable:
+                return None
+            start, end, _ = max(usable, key=lambda item: item[2])
+            return start, end
+
         band_top = max(8, input_line_y - 42)
         band_bottom = max(band_top + 8, min(input_line_y - 6, search_h))
         band_mask = text_mask[band_top:band_bottom, :panel_right]
         band_row_counts = band_mask.sum(axis=1)
-        active_band_rows = np.where((band_row_counts >= 1) & (band_row_counts <= 140))[0]
+        active_band_rows = np.where((band_row_counts >= 8) & (band_row_counts <= 120))[0]
         band_region: Optional[tuple[int, int, int, int]] = None
         band_candidate: Optional[tuple[int, int, int, int]] = None
         if len(active_band_rows):
-            band_active = np.zeros_like(band_mask, dtype=bool)
-            band_active[active_band_rows, :] = band_mask[active_band_rows, :]
-            ys, xs = np.where(band_active)
-            if len(xs) >= 12 and len(ys):
-                min_x = int(xs.min())
-                max_x = int(xs.max())
-                min_y = int(ys.min()) + band_top
-                max_y = int(ys.max()) + band_top
+            band_groups: list[tuple[int, int]] = []
+            start = int(active_band_rows[0])
+            previous = start
+            for row in active_band_rows[1:]:
+                row = int(row)
+                if row <= previous + 2:
+                    previous = row
+                    continue
+                band_groups.append((start, previous))
+                start = row
+                previous = row
+            band_groups.append((start, previous))
+            for rel_start, rel_end in reversed(band_groups):
+                group_mask = band_mask[max(0, rel_start - 2):min(band_mask.shape[0], rel_end + 3), :]
+                bounds = text_column_bounds(group_mask)
+                if not bounds:
+                    continue
+                min_x, max_x = bounds
+                min_y = rel_start + band_top
+                max_y = rel_end + band_top
                 crop_w = max_x - min_x + 1
                 crop_h_raw = max_y - min_y + 1
                 if 25 <= crop_w <= 190 and 2 <= crop_h_raw <= 18:
-                    crop_x = max(0, min_x - 8)
-                    crop_y = max(0, min_y - 8)
-                    crop_w = min(panel_right - crop_x, crop_w + 20)
-                    crop_h = min(search_h - crop_y, max(24, crop_h_raw + 16))
+                    crop_x = max(0, min_x - 6)
+                    crop_y = max(0, min_y - 5)
+                    crop_w = min(panel_right - crop_x, crop_w + 12)
+                    crop_h = min(search_h - crop_y, max(20, crop_h_raw + 10))
                     band_region = (search_x + crop_x, search_y + crop_y, crop_w, crop_h)
                     band_candidate = (min_y, max_y, min_x, max_x)
+                    break
 
         row_counts = text_mask.sum(axis=1)
         active_rows = np.where((row_counts >= 2) & (row_counts <= 160))[0]
@@ -1540,11 +1577,10 @@ class AutomationBackend:
             if group_h < 3 or group_h > 18:
                 continue
             group_mask = text_mask[max(0, start - 2):min(usable_bottom, end + 3), :]
-            xs = np.where(group_mask.any(axis=0))[0]
-            if len(xs) < 25:
+            bounds = text_column_bounds(group_mask)
+            if not bounds:
                 continue
-            min_x = int(xs[0])
-            max_x = int(xs[-1])
+            min_x, max_x = bounds
             crop_w = max_x - min_x + 1
             if crop_w < 35 or crop_w > 180:
                 continue
