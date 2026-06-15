@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-attack-pulse-ocr-rank-v12"
+APP_VERSION = "2026-06-15-low-latency-attack-v13"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -868,24 +868,22 @@ class AutomationBackend:
         if current < self.action_pause_until:
             self.release_attack()
             return
-        if current < self.attack_resume_at:
-            self.release_attack()
-            return
-        if self.attack_held and current - self.attack_hold_started >= 10000:
-            self.release_attack()
-            self.attack_resume_at = current + 2000
-            self.log("Attack hold pause: 2s.")
-            return
         self.hold_attack(config.attack_key)
-        pulse_interval = max(min(config.attack_delay_ms, 1000), 35)
+        pulse_interval = max(min(config.attack_delay_ms, 1000), 15)
         if current - self.last_attack_pulse >= pulse_interval:
             key = normalize_key(config.attack_key)
-            if not send_virtual_key_down(key):
+            if key in VK_CODES and os.name == "nt":
+                send_virtual_key_up(key)
+                time.sleep(0.003)
+                send_virtual_key_down(key)
+            else:
+                pyautogui.keyUp(key)
+                time.sleep(0.003)
                 pyautogui.keyDown(key)
             self.last_attack_pulse = current
         if current - self.last_attack_log >= 5000:
             self.last_attack_log = current
-            self.log(f"Attack key held/pulsed: {config.attack_key}")
+            self.log(f"Attack key refreshed: {config.attack_key} every {pulse_interval}ms")
 
     def run_skills(self, config: BotConfig, current: int) -> None:
         for index, skill in enumerate(config.skills):
@@ -893,16 +891,16 @@ class AutomationBackend:
                 continue
             ident = f"skill_{index}"
             if current - self.last_skill.get(ident, 0) >= max(skill.interval_ms, 20):
-                pause_ms = max(skill.cast_pause_ms, 650)
+                pause_ms = max(skill.cast_pause_ms, 0)
                 taps = max(skill.taps, 1)
-                self.action_pause_until = now_ms() + pause_ms + 450
+                self.action_pause_until = now_ms() + pause_ms + 80
                 self.release_attack()
                 release_modifiers()
-                time.sleep(0.08)
+                time.sleep(0.03)
                 for tap_index in range(taps):
-                    self.press(skill.key, 0.16)
+                    self.press(skill.key, 0.08)
                     if tap_index + 1 < taps:
-                        time.sleep(0.12)
+                        time.sleep(0.05)
                 release_modifiers()
                 self.last_skill[ident] = current
                 self.log(f"Used {skill.name}. ({taps} tap{'s' if taps != 1 else ''})")
