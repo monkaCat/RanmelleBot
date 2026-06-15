@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-ld-full-action-pause-v18"
+APP_VERSION = "2026-06-15-dungeon-custom-command-v19"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -782,7 +782,6 @@ class AutomationBackend:
                         time.sleep(0.03)
                         continue
                     self.run_skills(config, current)
-                    self.run_command(config, current)
                     self.run_detectors(config, current)
                 elif config.mode == "Dungeon":
                     self.run_detectors(config, current)
@@ -790,6 +789,7 @@ class AutomationBackend:
                     self.attack_loop_enabled = bool(config.attack_enabled and combat_active)
                     if combat_active:
                         self.run_skills(config, current)
+                self.run_command(config, current)
                 time.sleep(0.03)
         except Exception as exc:
             self.log("Bot error: " + str(exc))
