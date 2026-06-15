@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-lightweight-enter-suppress-v8"
+APP_VERSION = "2026-06-15-lightweight-ld-strict-ocr-v9"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -218,6 +218,10 @@ def clean_ocr_text(text: str) -> str:
 def validate_ld_code(text: str) -> tuple[bool, str]:
     if not (OCR_MIN_LENGTH <= len(text) <= OCR_MAX_LENGTH):
         return False, f"length {len(text)}, expected {OCR_MIN_LENGTH}-{OCR_MAX_LENGTH}"
+    if not any(ch.isupper() for ch in text):
+        return False, "missing uppercase character"
+    if not any(ch.islower() for ch in text):
+        return False, "missing lowercase character"
     upper = text.upper()
     for keyword in OCR_REJECT_KEYWORDS:
         if keyword in upper:
@@ -1315,7 +1319,8 @@ class AutomationBackend:
             ranked = sorted(valid, key=lambda candidate: (score_ld_code_candidate(candidate), len(candidate)), reverse=True)
             append_event_log(f"OCR ranked candidates from {save_name}: {[(candidate, score_ld_code_candidate(candidate)) for candidate in ranked]}")
             return ranked[0]
-        return max(candidates, key=len, default="")
+        append_event_log(f"OCR produced no valid LD code from {save_name}; refusing fallback text.")
+        return ""
 
     def prepare_ocr_images(self, img: Any) -> list[Any]:
         gray = img.convert("L")
@@ -1479,7 +1484,9 @@ class AutomationBackend:
         blue_score = arr[:, :, 2].astype(np.int16) - (
             (arr[:, :, 0].astype(np.int16) + arr[:, :, 1].astype(np.int16)) // 2
         )
-        text_mask = ((gray < 225) | (blue_score > 10))
+        code_mask = (((gray < 190) & (gray > 25)) | (blue_score > 18))
+        ui_text_mask = ((gray < 225) | (blue_score > 10))
+        text_mask = ui_text_mask & code_mask
         text_mask[:8, :] = False
         text_mask[usable_bottom:, :] = False
         text_mask[:, panel_right:] = False
