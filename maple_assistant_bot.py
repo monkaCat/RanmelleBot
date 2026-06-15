@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-ld-ocr-preprocess-v26"
+APP_VERSION = "2026-06-15-hotkey-thread-v27"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -2015,6 +2015,9 @@ class MapleBotApp(tk.Tk):
         self.log_lines: list[str] = []
         self.backend = AutomationBackend(self.enqueue_log)
         self.hotkey_latch: set[str] = set()
+        self.hotkey_thread_latch: set[str] = set()
+        self.hotkey_stop_event = threading.Event()
+        self.hotkey_values = {"start": "f1", "stop": "f2", "mouse": "f3"}
         self.pending_mouse_capture: Optional[list[str]] = None
         self.pending_mouse_label = ""
         self.compact_mode = False
@@ -2023,6 +2026,10 @@ class MapleBotApp(tk.Tk):
         self.build_style()
         self.build_ui()
         self.load_config(DEFAULT_CONFIG, quiet=True)
+        self.refresh_hotkey_values()
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.hotkey_thread = threading.Thread(target=self.hotkey_thread_loop, daemon=True)
+        self.hotkey_thread.start()
         self.after(100, self.drain_log)
         self.after(500, self.hotkey_poll)
         self.after(120, self.update_cursor_position)
@@ -2656,6 +2663,7 @@ class MapleBotApp(tk.Tk):
     def start_bot(self) -> None:
         try:
             cfg = self.read_config_from_ui()
+            self.refresh_hotkey_values(cfg)
             self.backend.start(cfg)
             self.started_at = time.monotonic()
             self.set_status("Active")
@@ -2667,6 +2675,11 @@ class MapleBotApp(tk.Tk):
     def stop_bot(self) -> None:
         self.backend.stop()
         self.set_status("Stopped")
+
+    def on_close(self) -> None:
+        self.hotkey_stop_event.set()
+        self.backend.stop()
+        self.destroy()
 
     def set_status(self, value: str) -> None:
         self.status_var.set(value)
@@ -2684,18 +2697,52 @@ class MapleBotApp(tk.Tk):
 
     def hotkey_poll(self) -> None:
         try:
-            start_key = normalize_key(self.vars["start_hotkey"].get())
-            stop_key = normalize_key(self.vars["stop_hotkey"].get())
-            mouse_key = normalize_key(self.vars["mouse_hotkey"].get())
-            if start_key:
-                self.check_hotkey(start_key, self.start_bot)
-            if stop_key:
-                self.check_hotkey(stop_key, self.stop_bot)
-            if mouse_key:
-                self.check_hotkey(mouse_key, self.toggle_cursor_tracking)
+            self.refresh_hotkey_values()
         except Exception as exc:
             self.enqueue_log(f"Hotkey polling error: {exc}")
-        self.after(80, self.hotkey_poll)
+        self.after(500, self.hotkey_poll)
+
+    def refresh_hotkey_values(self, cfg: Optional[BotConfig] = None) -> None:
+        if cfg is not None:
+            self.hotkey_values = {
+                "start": normalize_key(cfg.start_hotkey),
+                "stop": normalize_key(cfg.stop_hotkey),
+                "mouse": normalize_key(cfg.mouse_hotkey),
+            }
+            return
+        self.hotkey_values = {
+            "start": normalize_key(self.vars["start_hotkey"].get()),
+            "stop": normalize_key(self.vars["stop_hotkey"].get()),
+            "mouse": normalize_key(self.vars["mouse_hotkey"].get()),
+        }
+
+    def hotkey_thread_loop(self) -> None:
+        while not self.hotkey_stop_event.is_set():
+            try:
+                values = dict(self.hotkey_values)
+                self.check_hotkey_thread(values.get("start", ""), "start")
+                self.check_hotkey_thread(values.get("stop", ""), "stop")
+                self.check_hotkey_thread(values.get("mouse", ""), "mouse")
+            except Exception as exc:
+                self.log_queue.put(f"[{datetime.now().strftime('%H:%M:%S')}] Hotkey thread error: {exc}")
+            time.sleep(0.05)
+
+    def check_hotkey_thread(self, key: str, action_name: str) -> None:
+        if not key:
+            return
+        latch_key = f"{action_name}:{key}"
+        pressed = is_hotkey_pressed(key)
+        if pressed and latch_key not in self.hotkey_thread_latch:
+            self.hotkey_thread_latch.add(latch_key)
+            if action_name == "stop":
+                self.backend.stop()
+                self.after(0, lambda: self.set_status("Stopped"))
+            elif action_name == "start":
+                self.after(0, self.start_bot)
+            elif action_name == "mouse":
+                self.after(0, self.toggle_cursor_tracking)
+        elif not pressed and latch_key in self.hotkey_thread_latch:
+            self.hotkey_thread_latch.remove(latch_key)
 
     def check_hotkey(self, key: str, action: Callable[[], None]) -> None:
         pressed = is_hotkey_pressed(key)
