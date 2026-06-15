@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-command-priority-debug-v39"
+APP_VERSION = "2026-06-15-skill-first-command-v40"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -797,16 +797,19 @@ class AutomationBackend:
                     if self.run_ocr(config, current):
                         time.sleep(0.03)
                         continue
-                    self.run_command(config, current)
-                    self.run_skills(config, current)
+                    skill_cast = self.run_skills(config, current)
+                    if not skill_cast:
+                        self.run_command(config, current)
                     self.run_detectors(config, current)
                 elif config.mode == "Dungeon":
-                    self.run_command(config, current)
                     self.run_detectors(config, current)
                     combat_active = self.run_dungeon(config, current)
                     self.attack_loop_enabled = bool(config.attack_enabled and combat_active)
+                    skill_cast = False
                     if combat_active:
-                        self.run_skills(config, current)
+                        skill_cast = self.run_skills(config, current)
+                    if not skill_cast:
+                        self.run_command(config, current)
                 time.sleep(0.03)
         except Exception as exc:
             self.log("Bot error: " + str(exc))
@@ -958,9 +961,9 @@ class AutomationBackend:
             self.last_attack_log = current
             self.log(f"Attack key refreshed: {config.attack_key} every {pulse_interval}ms")
 
-    def run_skills(self, config: BotConfig, current: int) -> None:
+    def run_skills(self, config: BotConfig, current: int) -> bool:
         if current < self.action_pause_until:
-            return
+            return False
         for index, skill in enumerate(config.skills):
             if not skill.enabled or not skill.key:
                 continue
@@ -980,6 +983,8 @@ class AutomationBackend:
                 self.last_skill[ident] = current
                 self.log(f"Used {skill.name}. ({taps} tap{'s' if taps != 1 else ''})")
                 time.sleep(pause_ms / 1000)
+                return True
+        return False
 
     def skill_due_soon(self, config: BotConfig, current: int, window_ms: int = 1500) -> bool:
         for index, skill in enumerate(config.skills):
