@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-dedicated-attack-loop-v14"
+APP_VERSION = "2026-06-15-held-attack-loop-v15"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -873,30 +873,34 @@ class AutomationBackend:
         key = normalize_key(config.attack_key)
         if not key:
             return
-        append_event_log(f"Dedicated attack loop started. key={key} delay_ms={config.attack_delay_ms}")
+        append_event_log(f"Held attack loop started. key={key} keepalive_ms={config.attack_delay_ms}")
         while not self.stop_event.is_set():
             current = now_ms()
-            delay_ms = max(min(config.attack_delay_ms, 1000), 10)
             if not self.attack_loop_enabled or current < self.action_pause_until:
                 self.release_attack()
-                time.sleep(0.01)
+                time.sleep(0.02)
                 continue
             try:
                 if not self.target_hwnd:
                     self.ensure_target_window()
                 with self.attack_lock:
-                    if not send_virtual_key(key, 0.001):
-                        pyautogui.press(key)
+                    if not self.attack_held or self.attack_key_held != key:
+                        self.hold_attack(key)
+                    keepalive_ms = max(min(config.attack_delay_ms, 2000), 250)
+                    if current - self.last_attack_pulse >= keepalive_ms:
+                        if not send_virtual_key_down(key):
+                            pyautogui.keyDown(key)
+                        self.last_attack_pulse = current
                 if current - self.last_attack_log >= 5000:
                     self.last_attack_log = current
-                    self.log(f"Attack loop: {key} every {delay_ms}ms")
+                    self.log(f"Attack held: {key}")
             except Exception as exc:
                 if current - self.last_focus_error_log > 5000:
                     self.last_focus_error_log = current
                     self.log(f"Attack loop warning: {exc}")
-            time.sleep(delay_ms / 1000)
+            time.sleep(0.02)
         self.release_attack()
-        append_event_log("Dedicated attack loop stopped.")
+        append_event_log("Held attack loop stopped.")
 
     def run_attack(self, config: BotConfig, current: int) -> None:
         if not config.attack_enabled:
