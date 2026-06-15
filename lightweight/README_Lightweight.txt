@@ -5,7 +5,7 @@ This tree contains the compact GUI build.
 Files:
 - meowmeowbot_lightweight.py: main lightweight bot
 - MeowMeowBot_Lightweight.pyw: no-console launcher
-- Start_MeowMeowBot_Lightweight_Hidden.vbs: admin hidden launcher
+- Start_MeowMeowBot_Lightweight.vbs: admin no-console launcher
 - Install_MeowMeowBot_Lightweight_Dependencies.bat: dependency installer
 - requirements.txt: Python package list
 - Detections/: image templates
