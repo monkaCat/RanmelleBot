@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-held-attack-loop-v15"
+APP_VERSION = "2026-06-15-dungeon-input-attack-pause-v16"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -681,7 +681,7 @@ class AutomationBackend:
         self.last_ocr_popup = None
         self.release_attack()
         self.running = True
-        self.attack_loop_enabled = config.attack_enabled
+        self.attack_loop_enabled = bool(config.attack_enabled and config.mode == "Farming")
         self.thread = threading.Thread(target=self.loop, args=(config,), daemon=True)
         self.thread.start()
         self.attack_thread = threading.Thread(target=self.attack_loop, args=(config,), daemon=True)
@@ -835,6 +835,13 @@ class AutomationBackend:
                     pyautogui.hotkey("ctrl", "v")
             else:
                 pyautogui.write(text, interval=0.01)
+
+    def pause_attack_for_input(self, pause_ms: int = 1500) -> None:
+        self.attack_loop_enabled = False
+        self.action_pause_until = now_ms() + max(pause_ms, 250)
+        self.release_attack()
+        release_modifiers()
+        time.sleep(0.05)
 
     def hold_attack(self, key: str) -> None:
         key = normalize_key(key)
@@ -1559,6 +1566,7 @@ class AutomationBackend:
         return True
 
     def run_dungeon_drop_selection(self, dungeon: DungeonConfig) -> None:
+        self.pause_attack_for_input(2500)
         option_index = {
             "4 drops": 0,
             "8 drops": 1,
@@ -1573,6 +1581,7 @@ class AutomationBackend:
         self.press("enter")
         self.log(f"Dungeon option selected: {dungeon.drop_option}")
         if dungeon.drop_option == "Custom Drops":
+            self.pause_attack_for_input(2500)
             time.sleep(0.45)
             self.type_text(str(max(dungeon.custom_coins, 1)))
             self.press("enter")
