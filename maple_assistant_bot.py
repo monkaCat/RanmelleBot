@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-ld-code-band-crop-v11"
+APP_VERSION = "2026-06-15-attack-pulse-ocr-rank-v12"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -229,6 +229,36 @@ def is_valid_ld_code(text: str) -> bool:
     return validate_ld_code(text)[0]
 
 
+def score_ld_code_candidate(text: str) -> int:
+    valid, _ = validate_ld_code(text)
+    if not valid:
+        return -1000
+    score = 100
+    score -= abs(len(text) - 10) * 5
+    if 8 <= len(text) <= 12:
+        score += 18
+    if 14 <= len(text):
+        score -= 20
+    if any(ch.isdigit() for ch in text):
+        score += 4
+    if any(ch.islower() for ch in text) and any(ch.isupper() for ch in text):
+        score += 8
+    lower = text.lower()
+    for char in OCR_ALLOWED_CHARS.lower():
+        if char * 3 in lower:
+            score -= 18
+    longest_run = 1
+    current_run = 1
+    for previous, current in zip(lower, lower[1:]):
+        if previous == current:
+            current_run += 1
+            longest_run = max(longest_run, current_run)
+        else:
+            current_run = 1
+    score -= max(0, longest_run - 2) * 10
+    return score
+
+
 def append_event_log(text: str) -> None:
     try:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -312,6 +342,77 @@ def send_virtual_key(key: str, hold_seconds: float = 0.065) -> bool:
     return True
 
 
+def send_virtual_key_down(key: str) -> bool:
+    key = normalize_key(key)
+    vk = VK_CODES.get(key)
+    if vk is None or os.name != "nt":
+        return False
+    KEYEVENTF_EXTENDEDKEY = 0x0001
+    KEYEVENTF_SCANCODE = 0x0008
+    INPUT_KEYBOARD = 1
+    scan = ctypes.windll.user32.MapVirtualKeyW(vk, 0)
+    flags = KEYEVENTF_SCANCODE if scan else 0
+    if key in {"up", "down", "left", "right", "insert", "delete", "home", "end", "pageup", "pagedown"}:
+        flags |= KEYEVENTF_EXTENDEDKEY
+
+    class KeyBdInput(ctypes.Structure):
+        _fields_ = [
+            ("wVk", wintypes.WORD),
+            ("wScan", wintypes.WORD),
+            ("dwFlags", wintypes.DWORD),
+            ("time", wintypes.DWORD),
+            ("dwExtraInfo", ctypes.c_void_p),
+        ]
+
+    class InputUnion(ctypes.Union):
+        _fields_ = [("ki", KeyBdInput)]
+
+    class Input(ctypes.Structure):
+        _fields_ = [("type", wintypes.DWORD), ("union", InputUnion)]
+
+    event = Input(type=INPUT_KEYBOARD, union=InputUnion(ki=KeyBdInput(0 if scan else vk, scan, flags, 0, None)))
+    if ctypes.windll.user32.SendInput(1, ctypes.byref(event), ctypes.sizeof(event)) == 1:
+        return True
+    ctypes.windll.user32.keybd_event(0 if scan else vk, scan, flags, 0)
+    return True
+
+
+def send_virtual_key_up(key: str) -> bool:
+    key = normalize_key(key)
+    vk = VK_CODES.get(key)
+    if vk is None or os.name != "nt":
+        return False
+    KEYEVENTF_KEYUP = 0x0002
+    KEYEVENTF_EXTENDEDKEY = 0x0001
+    KEYEVENTF_SCANCODE = 0x0008
+    INPUT_KEYBOARD = 1
+    scan = ctypes.windll.user32.MapVirtualKeyW(vk, 0)
+    flags = KEYEVENTF_KEYUP | (KEYEVENTF_SCANCODE if scan else 0)
+    if key in {"up", "down", "left", "right", "insert", "delete", "home", "end", "pageup", "pagedown"}:
+        flags |= KEYEVENTF_EXTENDEDKEY
+
+    class KeyBdInput(ctypes.Structure):
+        _fields_ = [
+            ("wVk", wintypes.WORD),
+            ("wScan", wintypes.WORD),
+            ("dwFlags", wintypes.DWORD),
+            ("time", wintypes.DWORD),
+            ("dwExtraInfo", ctypes.c_void_p),
+        ]
+
+    class InputUnion(ctypes.Union):
+        _fields_ = [("ki", KeyBdInput)]
+
+    class Input(ctypes.Structure):
+        _fields_ = [("type", wintypes.DWORD), ("union", InputUnion)]
+
+    event = Input(type=INPUT_KEYBOARD, union=InputUnion(ki=KeyBdInput(0 if scan else vk, scan, flags, 0, None)))
+    if ctypes.windll.user32.SendInput(1, ctypes.byref(event), ctypes.sizeof(event)) == 1:
+        return True
+    ctypes.windll.user32.keybd_event(0 if scan else vk, scan, flags, 0)
+    return True
+
+
 def send_key_combo(*keys: str) -> bool:
     normalized = [normalize_key(key) for key in keys]
     vks = [VK_CODES.get(key) for key in normalized]
@@ -328,20 +429,7 @@ def send_key_combo(*keys: str) -> bool:
 
 
 def release_virtual_key(key: str) -> None:
-    key = normalize_key(key)
-    vk = VK_CODES.get(key)
-    if vk is None or os.name != "nt":
-        return
-    KEYEVENTF_KEYUP = 0x0002
-    KEYEVENTF_SCANCODE = 0x0008
-    KEYEVENTF_EXTENDEDKEY = 0x0001
-    scan = ctypes.windll.user32.MapVirtualKeyW(vk, 0)
-    flags = KEYEVENTF_KEYUP
-    if scan:
-        flags |= KEYEVENTF_SCANCODE
-    if key in {"up", "down", "left", "right", "insert", "delete", "home", "end", "pageup", "pagedown"}:
-        flags |= KEYEVENTF_EXTENDEDKEY
-    ctypes.windll.user32.keybd_event(0 if scan else vk, scan, flags, 0)
+    send_virtual_key_up(key)
 
 
 def release_modifiers() -> None:
@@ -560,6 +648,7 @@ class AutomationBackend:
         self.ocr_active_until = 0
         self.last_ocr_popup: Optional[dict[str, Any]] = None
         self.last_attack_log = 0
+        self.last_attack_pulse = 0
         self.attack_held = False
         self.attack_hold_started = 0
         self.attack_resume_at = 0
@@ -748,18 +837,12 @@ class AutomationBackend:
         self.release_attack()
         self.ensure_target_window()
         release_modifiers()
-        if key in VK_CODES and os.name == "nt":
-            vk = VK_CODES[key]
-            scan = ctypes.windll.user32.MapVirtualKeyW(vk, 0)
-            if scan:
-                ctypes.windll.user32.keybd_event(0, scan, 0x0008, 0)
-            else:
-                ctypes.windll.user32.keybd_event(vk, 0, 0, 0)
-        else:
+        if not send_virtual_key_down(key):
             pyautogui.keyDown(key)
         self.attack_held = True
         self.attack_key_held = key
         self.attack_hold_started = now_ms()
+        self.last_attack_pulse = self.attack_hold_started
         self.log(f"Attack hold started: {key}")
 
     def release_attack(self) -> None:
@@ -794,9 +877,15 @@ class AutomationBackend:
             self.log("Attack hold pause: 2s.")
             return
         self.hold_attack(config.attack_key)
+        pulse_interval = max(min(config.attack_delay_ms, 1000), 35)
+        if current - self.last_attack_pulse >= pulse_interval:
+            key = normalize_key(config.attack_key)
+            if not send_virtual_key_down(key):
+                pyautogui.keyDown(key)
+            self.last_attack_pulse = current
         if current - self.last_attack_log >= 5000:
             self.last_attack_log = current
-            self.log(f"Attack key held: {config.attack_key}")
+            self.log(f"Attack key held/pulsed: {config.attack_key}")
 
     def run_skills(self, config: BotConfig, current: int) -> None:
         for index, skill in enumerate(config.skills):
@@ -1155,7 +1244,9 @@ class AutomationBackend:
         append_event_log(f"OCR candidates from {save_name}: {candidates}")
         valid = [candidate for candidate in candidates if is_valid_ld_code(candidate)]
         if valid:
-            return max(valid, key=len)
+            ranked = sorted(valid, key=lambda candidate: (score_ld_code_candidate(candidate), len(candidate)), reverse=True)
+            append_event_log(f"OCR ranked candidates from {save_name}: {[(candidate, score_ld_code_candidate(candidate)) for candidate in ranked]}")
+            return ranked[0]
         return max(candidates, key=len, default="")
 
     def prepare_ocr_images(self, img: Any) -> list[Any]:
