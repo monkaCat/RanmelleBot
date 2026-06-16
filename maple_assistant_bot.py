@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-16-attack-release-cycle-v42"
+APP_VERSION = "2026-06-16-interruptible-command-stop-v43"
 MAX_TEMPLATE_MATCH_CELLS = 35_000_000
 
 UI_BG = "#080414"
@@ -713,6 +713,9 @@ class AutomationBackend:
         self.release_attack()
         self.ocr_active_until = 0
         self.action_pause_until = 0
+        self.attack_resume_at = 0
+        self.suppress_enter_until = 0
+        self.command_enter_guard_until = 0
         self.running = False
         self.log("Bot stopped.")
 
@@ -1037,31 +1040,40 @@ class AutomationBackend:
                 append_event_log(f"Scheduled command due but action pause is active for {self.action_pause_until - current}ms.")
             return
         self.last_command = current
-        self.send_chat_command(config.command_text, max(config.command_step_delay_ms, 500), defocus_after=True)
-        self.log("Scheduled command sent.")
+        if self.send_chat_command(config.command_text, max(config.command_step_delay_ms, 500), defocus_after=True):
+            self.log("Scheduled command sent.")
 
-    def send_chat_command(self, command_text: str, step_delay_ms: int = 500, defocus_after: bool = False) -> None:
+    def send_chat_command(self, command_text: str, step_delay_ms: int = 500, defocus_after: bool = False) -> bool:
         command_text = " ".join(str(command_text).split())
         if not command_text:
-            return
+            return False
         self.pause_attack_for_input(max(step_delay_ms * 3, 900))
         self.command_enter_guard_until = 0
         release_modifiers()
         self.press("enter", 0.055, force=True)
-        time.sleep(max(step_delay_ms, 350) / 1000)
+        if not self.interruptible_sleep(max(step_delay_ms, 350) / 1000):
+            append_event_log(f"Command aborted before typing: {command_text!r}")
+            return False
         self.type_text(command_text)
-        time.sleep(max(step_delay_ms, 450) / 1000)
+        if not self.interruptible_sleep(max(step_delay_ms, 450) / 1000):
+            append_event_log(f"Command aborted before confirm Enter: {command_text!r}")
+            return False
         self.ensure_target_window()
         self.press("enter", 0.055, force=True)
         append_event_log(f"Command confirmed with exactly one Enter after typing: {command_text!r}")
         release_modifiers()
         if defocus_after:
-            time.sleep(0.25)
+            if not self.interruptible_sleep(0.25):
+                append_event_log(f"Command aborted before defocus click: {command_text!r}")
+                return False
             self.click_game_center("scheduled command defocus")
-        time.sleep(0.18)
+        if not self.interruptible_sleep(0.18):
+            append_event_log(f"Command aborted after confirm: {command_text!r}")
+            return False
         self.action_pause_until = now_ms() + 1100
         self.suppress_enter_until = now_ms() + 3500
         self.command_enter_guard_until = now_ms() + 1200
+        return True
 
     def click_game_center(self, reason: str = "defocus") -> None:
         if pyautogui is None:
@@ -2845,6 +2857,10 @@ class MapleBotApp(tk.Tk):
         if pressed and latch_key not in self.hotkey_thread_latch:
             self.hotkey_thread_latch.add(latch_key)
             if action_name == "stop":
+                self.backend.stop_event.set()
+                self.backend.attack_loop_enabled = False
+                self.backend.release_attack()
+                self.backend.running = False
                 self.backend.stop()
                 self.after(0, lambda: self.set_status("Stopped"))
             elif action_name == "start":
