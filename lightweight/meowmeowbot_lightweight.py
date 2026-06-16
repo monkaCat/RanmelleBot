@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-16-lightweight-interruptible-command-stop-v28"
+APP_VERSION = "2026-06-16-lightweight-reliable-f2-stop-v29"
 MAX_TEMPLATE_MATCH_CELLS = 35_000_000
 
 UI_BG = "#080414"
@@ -298,7 +298,8 @@ def is_hotkey_pressed(key: str) -> bool:
     vk = VK_CODES.get(key)
     if vk is None or os.name != "nt":
         return False
-    return bool(ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000)
+    state = ctypes.windll.user32.GetAsyncKeyState(vk)
+    return bool(state & 0x8000 or state & 0x0001)
 
 
 def send_virtual_key(key: str, hold_seconds: float = 0.065) -> bool:
@@ -2845,6 +2846,8 @@ class MapleBotApp(tk.Tk):
                 values = dict(self.hotkey_values)
                 self.check_hotkey_thread(values.get("start", ""), "start")
                 self.check_hotkey_thread(values.get("stop", ""), "stop")
+                if values.get("stop", "") != "f2":
+                    self.check_hotkey_thread("f2", "stop")
                 self.check_hotkey_thread(values.get("mouse", ""), "mouse")
             except Exception as exc:
                 self.log_queue.put(f"[{datetime.now().strftime('%H:%M:%S')}] Hotkey thread error: {exc}")
