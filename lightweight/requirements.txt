@@ -2,5 +2,5 @@ pyautogui
 pillow
 opencv-python
 numpy
-pytesseract
+easyocr
 pywin32

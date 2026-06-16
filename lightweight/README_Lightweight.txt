@@ -11,3 +11,5 @@ Files:
 - Detections/: image templates
 
 The lightweight build uses the same automation logic as the main bot, but removes the large module icons and reduces spacing, fonts, panel width, and tab padding.
+
+OCR: this build uses EasyOCR (pure Python, no external Tesseract binary required). On first start, EasyOCR downloads its recognition model (~100 MB) once.

@@ -4,10 +4,9 @@ MeowMeowBot
 Desktop automation helper for private MapleStory servers where macroing is allowed.
 
 Install runtime dependencies in your own Python environment:
-    pip install pyautogui pillow opencv-python numpy pytesseract
+    pip install pyautogui pillow opencv-python numpy easyocr
 
-Optional:
-    Install Tesseract OCR for Windows and set its path in the Settings tab.
+OCR engine: EasyOCR (no external binary required, runs fully in Python).
 """
 
 from __future__ import annotations
@@ -44,9 +43,9 @@ except Exception:  # pragma: no cover
     win32gui = None
 
 try:
-    import pytesseract
+    import easyocr
 except Exception:  # pragma: no cover
-    pytesseract = None
+    easyocr = None
 
 try:
     import cv2
@@ -69,8 +68,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-16-lightweight-reliable-f2-stop-v29"
-MAX_TEMPLATE_MATCH_CELLS = 35_000_000
+APP_VERSION = "2026-06-15-lightweight-skill-first-command-v25"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -298,8 +296,7 @@ def is_hotkey_pressed(key: str) -> bool:
     vk = VK_CODES.get(key)
     if vk is None or os.name != "nt":
         return False
-    state = ctypes.windll.user32.GetAsyncKeyState(vk)
-    return bool(state & 0x8000 or state & 0x0001)
+    return bool(ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000)
 
 
 def send_virtual_key(key: str, hold_seconds: float = 0.065) -> bool:
@@ -558,7 +555,6 @@ class OcrConfig:
     popup_settle_delay_ms: int = 3000
     retry_delay_ms: int = 1500
     result_delay_ms: int = 800
-    tesseract_path: str = ""
 
 
 @dataclass
@@ -660,6 +656,7 @@ class AutomationBackend:
         self.ocr_pause_until = 0
         self.ocr_active_until = 0
         self.last_ocr_popup: Optional[dict[str, Any]] = None
+        self._easyocr_reader: Any = None
         self.last_attack_log = 0
         self.last_attack_pulse = 0
         self.attack_held = False
@@ -694,7 +691,6 @@ class AutomationBackend:
         self.dungeon_phase_until = 0
         self.ocr_active_until = 0
         self.ocr_pause_until = 0
-        self.attack_resume_at = 0
         self.suppress_enter_until = 0
         self.command_enter_guard_until = 0
         self.last_ocr_popup = None
@@ -714,9 +710,6 @@ class AutomationBackend:
         self.release_attack()
         self.ocr_active_until = 0
         self.action_pause_until = 0
-        self.attack_resume_at = 0
-        self.suppress_enter_until = 0
-        self.command_enter_guard_until = 0
         self.running = False
         self.log("Bot stopped.")
 
@@ -732,8 +725,8 @@ class AutomationBackend:
             missing.append("opencv-python")
         if np is None:
             missing.append("numpy")
-        if pytesseract is None:
-            missing.append("pytesseract")
+        if easyocr is None:
+            missing.append("easyocr")
         if missing:
             raise RuntimeError("Missing dependencies: " + ", ".join(missing))
         pyautogui.FAILSAFE = True
@@ -793,21 +786,6 @@ class AutomationBackend:
                     self.log(f"Window focus warning: {exc}")
                 return
             time.sleep(0.04)
-
-    def target_window_region(self) -> Optional[tuple[int, int, int, int]]:
-        if win32gui is None:
-            return None
-        try:
-            if not self.target_hwnd or not win32gui.IsWindow(self.target_hwnd):
-                self.target_hwnd = self.focus_game_window(REQUIRED_GAME_WINDOW)
-            left, top, right, bottom = win32gui.GetWindowRect(self.target_hwnd)
-        except Exception:
-            return None
-        width = max(0, right - left)
-        height = max(0, bottom - top)
-        if width < 50 or height < 50:
-            return None
-        return (max(0, left), max(0, top), width, height)
 
     def loop(self, config: BotConfig) -> None:
         try:
@@ -932,7 +910,7 @@ class AutomationBackend:
         append_event_log(f"Held attack loop started. key={key} keepalive_ms={config.attack_delay_ms}")
         while not self.stop_event.is_set():
             current = now_ms()
-            if not self.attack_loop_enabled or current < self.action_pause_until or current < self.attack_resume_at:
+            if not self.attack_loop_enabled or current < self.action_pause_until:
                 self.release_attack()
                 time.sleep(0.02)
                 continue
@@ -940,12 +918,6 @@ class AutomationBackend:
                 if not self.target_hwnd:
                     self.ensure_target_window()
                 with self.attack_lock:
-                    if self.attack_held and current - self.attack_hold_started >= 10000:
-                        self.release_attack()
-                        self.attack_resume_at = current + 2000
-                        self.log("Attack released for 2s cycle pause.")
-                        time.sleep(0.02)
-                        continue
                     if not self.attack_held or self.attack_key_held != key:
                         self.hold_attack(key)
                     keepalive_ms = max(min(config.attack_delay_ms, 2000), 250)
@@ -1041,40 +1013,31 @@ class AutomationBackend:
                 append_event_log(f"Scheduled command due but action pause is active for {self.action_pause_until - current}ms.")
             return
         self.last_command = current
-        if self.send_chat_command(config.command_text, max(config.command_step_delay_ms, 500), defocus_after=True):
-            self.log("Scheduled command sent.")
+        self.send_chat_command(config.command_text, max(config.command_step_delay_ms, 500), defocus_after=True)
+        self.log("Scheduled command sent.")
 
-    def send_chat_command(self, command_text: str, step_delay_ms: int = 500, defocus_after: bool = False) -> bool:
+    def send_chat_command(self, command_text: str, step_delay_ms: int = 500, defocus_after: bool = False) -> None:
         command_text = " ".join(str(command_text).split())
         if not command_text:
-            return False
+            return
         self.pause_attack_for_input(max(step_delay_ms * 3, 900))
         self.command_enter_guard_until = 0
         release_modifiers()
         self.press("enter", 0.055, force=True)
-        if not self.interruptible_sleep(max(step_delay_ms, 350) / 1000):
-            append_event_log(f"Command aborted before typing: {command_text!r}")
-            return False
+        time.sleep(max(step_delay_ms, 350) / 1000)
         self.type_text(command_text)
-        if not self.interruptible_sleep(max(step_delay_ms, 450) / 1000):
-            append_event_log(f"Command aborted before confirm Enter: {command_text!r}")
-            return False
+        time.sleep(max(step_delay_ms, 450) / 1000)
         self.ensure_target_window()
         self.press("enter", 0.055, force=True)
         append_event_log(f"Command confirmed with exactly one Enter after typing: {command_text!r}")
         release_modifiers()
         if defocus_after:
-            if not self.interruptible_sleep(0.25):
-                append_event_log(f"Command aborted before defocus click: {command_text!r}")
-                return False
+            time.sleep(0.25)
             self.click_game_center("scheduled command defocus")
-        if not self.interruptible_sleep(0.18):
-            append_event_log(f"Command aborted after confirm: {command_text!r}")
-            return False
+        time.sleep(0.18)
         self.action_pause_until = now_ms() + 1100
         self.suppress_enter_until = now_ms() + 3500
         self.command_enter_guard_until = now_ms() + 1200
-        return True
 
     def click_game_center(self, reason: str = "defocus") -> None:
         if pyautogui is None:
@@ -1139,8 +1102,6 @@ class AutomationBackend:
         if current - self.last_detector.get("__ocr__", 0) < max(ocr.check_interval_ms, 500):
             return current < self.ocr_active_until
         self.last_detector["__ocr__"] = current
-        if ocr.tesseract_path and pytesseract is not None:
-            pytesseract.pytesseract.tesseract_cmd = ocr.tesseract_path
         popup = self.find_ocr_popup(ocr)
         if not popup:
             self.ocr_last_answer = ""
@@ -1393,6 +1354,13 @@ class AutomationBackend:
         point_x, point_y = self.ocr_point(ocr, x, y)
         return point_x, point_y, width, height
 
+    def get_easyocr_reader(self) -> Any:
+        if self._easyocr_reader is None:
+            if easyocr is None:
+                return None
+            self._easyocr_reader = easyocr.Reader(["en"], gpu=False, verbose=False)
+        return self._easyocr_reader
+
     def read_text_region(
         self,
         x: int,
@@ -1402,8 +1370,9 @@ class AutomationBackend:
         psm_modes: tuple[str, ...] = ("6", "7"),
         save_name: str = "last_ocr_crop.png",
     ) -> str:
-        if pytesseract is None:
-            self.log("pytesseract is not installed.")
+        reader = self.get_easyocr_reader()
+        if reader is None:
+            self.log("easyocr is not installed.")
             return ""
         if ImageGrab is None:
             return ""
@@ -1416,13 +1385,25 @@ class AutomationBackend:
         processed_images = self.prepare_ocr_images(img)
         candidates = []
         for processed in processed_images:
-            for psm in psm_modes:
-                config = f"--oem 3 --psm {psm} -c tessedit_char_whitelist={OCR_ALLOWED_CHARS}"
-                candidate = clean_ocr_text(pytesseract.image_to_string(processed, config=config))
-                candidates.append(candidate)
-                if is_valid_ld_code(candidate):
-                    append_event_log(f"OCR early valid candidate from {save_name}: {candidate}")
-                    return candidate
+            if np is not None:
+                arr = np.array(processed.convert("L"))
+            else:
+                arr = processed
+            try:
+                results = reader.readtext(
+                    arr,
+                    allowlist=OCR_ALLOWED_CHARS,
+                    detail=0,
+                    paragraph=False,
+                )
+            except Exception as exc:
+                append_event_log(f"EasyOCR read failed for {save_name}: {exc}")
+                continue
+            candidate = clean_ocr_text("".join(results))
+            candidates.append(candidate)
+            if is_valid_ld_code(candidate):
+                append_event_log(f"OCR early valid candidate from {save_name}: {candidate}")
+                return candidate
         append_event_log(f"OCR candidates from {save_name}: {candidates}")
         valid = [candidate for candidate in candidates if is_valid_ld_code(candidate)]
         if valid:
@@ -1525,10 +1506,9 @@ class AutomationBackend:
     def find_ocr_popup(self, ocr: OcrConfig) -> Optional[dict[str, Any]]:
         if not ocr.popup_image:
             return None
-        region = self.target_window_region()
         if not ocr.cookbot_label_preset:
-            return self.find_image(ocr.popup_image, ocr.popup_confidence, region=region)
-        candidates = self.find_image_candidates(ocr.popup_image, ocr.popup_confidence, region=region, limit=20)
+            return self.find_image(ocr.popup_image, ocr.popup_confidence)
+        candidates = self.find_image_candidates(ocr.popup_image, ocr.popup_confidence, limit=20)
         for candidate in candidates:
             self.last_ocr_popup = candidate
             if self.is_valid_cookbot_code_crop(candidate):
@@ -2010,8 +1990,6 @@ class AutomationBackend:
             return None
         if ImageGrab is None or cv2 is None or np is None:
             return None
-        if region is None:
-            region = self.target_window_region()
         offset_x = 0
         offset_y = 0
         if region:
@@ -2024,14 +2002,6 @@ class AutomationBackend:
         if template is None:
             return None
         h, w = template.shape[:2]
-        sh, sw = screen.shape[:2]
-        if h > sh or w > sw:
-            append_event_log(f"Template skipped because it is larger than search area: template=({w}, {h}) search=({sw}, {sh}) path={template_path}")
-            return None
-        cells = (sw - w + 1) * (sh - h + 1)
-        if cells > MAX_TEMPLATE_MATCH_CELLS:
-            append_event_log(f"Template search skipped to avoid OpenCV OOM: cells={cells} template=({w}, {h}) search=({sw}, {sh}) path={template_path}")
-            return None
         result = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, max_loc = cv2.minMaxLoc(result)
         best_val = float(max_val)
@@ -2067,8 +2037,6 @@ class AutomationBackend:
             return []
         if ImageGrab is None or cv2 is None or np is None:
             return []
-        if region is None:
-            region = self.target_window_region()
         offset_x = 0
         offset_y = 0
         if region:
@@ -2081,14 +2049,6 @@ class AutomationBackend:
         if template is None:
             return []
         h, w = template.shape[:2]
-        sh, sw = screen.shape[:2]
-        if h > sh or w > sw:
-            append_event_log(f"Template candidates skipped because template is larger than search area: template=({w}, {h}) search=({sw}, {sh}) path={template_path}")
-            return []
-        cells = (sw - w + 1) * (sh - h + 1)
-        if cells > MAX_TEMPLATE_MATCH_CELLS:
-            append_event_log(f"Template candidates skipped to avoid OpenCV OOM: cells={cells} template=({w}, {h}) search=({sw}, {sh}) path={template_path}")
-            return []
         maps = [cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)]
         gray_screen = cv2.cvtColor(screen, cv2.COLOR_BGR2GRAY)
         gray_template = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
@@ -2496,7 +2456,6 @@ class MapleBotApp(tk.Tk):
         self.vars["ocr_popup_settle_delay_ms"] = tk.StringVar()
         self.vars["ocr_retry_delay_ms"] = tk.StringVar()
         self.vars["ocr_result_delay_ms"] = tk.StringVar()
-        self.vars["ocr_tesseract_path"] = tk.StringVar()
 
         ttk.Checkbutton(tab, text="Enable Lie Detector OCR (Farming only)", variable=self.vars["ocr_enabled"]).pack(anchor="w", pady=(0, 10))
         popup = ttk.LabelFrame(tab, text="Popup detection")
@@ -2527,10 +2486,6 @@ class MapleBotApp(tk.Tk):
             ("Retry delay (ms)", "ocr_retry_delay_ms"),
             ("Result delay (ms)", "ocr_result_delay_ms"),
         ])
-
-        settings = ttk.LabelFrame(tab, text="Tesseract")
-        settings.pack(fill="x", pady=6)
-        self.path_row(settings, "tesseract.exe path", self.vars["ocr_tesseract_path"])
 
     def build_dungeon_tab(self) -> None:
         tab = self.create_scrollable_tab("Dungeon")
@@ -2846,8 +2801,6 @@ class MapleBotApp(tk.Tk):
                 values = dict(self.hotkey_values)
                 self.check_hotkey_thread(values.get("start", ""), "start")
                 self.check_hotkey_thread(values.get("stop", ""), "stop")
-                if values.get("stop", "") != "f2":
-                    self.check_hotkey_thread("f2", "stop")
                 self.check_hotkey_thread(values.get("mouse", ""), "mouse")
             except Exception as exc:
                 self.log_queue.put(f"[{datetime.now().strftime('%H:%M:%S')}] Hotkey thread error: {exc}")
@@ -2861,10 +2814,6 @@ class MapleBotApp(tk.Tk):
         if pressed and latch_key not in self.hotkey_thread_latch:
             self.hotkey_thread_latch.add(latch_key)
             if action_name == "stop":
-                self.backend.stop_event.set()
-                self.backend.attack_loop_enabled = False
-                self.backend.release_attack()
-                self.backend.running = False
                 self.backend.stop()
                 self.after(0, lambda: self.set_status("Stopped"))
             elif action_name == "start":
@@ -2989,7 +2938,6 @@ class MapleBotApp(tk.Tk):
             parse_int(self.vars["ocr_popup_settle_delay_ms"].get(), 3000),
             parse_int(self.vars["ocr_retry_delay_ms"].get(), 1500),
             parse_int(self.vars["ocr_result_delay_ms"].get(), 800),
-            self.vars["ocr_tesseract_path"].get(),
         )
         cfg.dungeon = DungeonConfig(
             self.vars["mode"].get() == "Dungeon" or self.vars["dungeon_enabled"].get(),
@@ -3078,7 +3026,6 @@ class MapleBotApp(tk.Tk):
         self.vars["ocr_popup_settle_delay_ms"].set(str(ocr.popup_settle_delay_ms))
         self.vars["ocr_retry_delay_ms"].set(str(ocr.retry_delay_ms))
         self.vars["ocr_result_delay_ms"].set(str(ocr.result_delay_ms))
-        self.vars["ocr_tesseract_path"].set(ocr.tesseract_path)
         dungeon = cfg.dungeon
         self.vars["dungeon_enabled"].set(dungeon.enabled)
         self.vars["dungeon_role"].set(dungeon.role)
@@ -3158,6 +3105,7 @@ class MapleBotApp(tk.Tk):
             merged = {"mode": "Farming", **item}
             cfg.detectors.append(DetectorConfig(**merged))
         ocr_raw = {**asdict(cfg)["ocr"], **raw.get("ocr", {})}
+        ocr_raw.pop("tesseract_path", None)
         ocr_raw.setdefault("cookbot_label_preset", True)
         cfg.ocr = OcrConfig(**ocr_raw)
         dungeon_raw = {**asdict(cfg)["dungeon"], **raw.get("dungeon", {})}

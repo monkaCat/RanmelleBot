@@ -30,7 +30,7 @@ if "%PY_CMD%"=="" goto install_python
 if errorlevel 1 goto install_failed
 %PY_CMD% -m pip install -r requirements.txt
 if errorlevel 1 goto install_failed
-goto install_tesseract
+goto done
 
 :install_python
 echo Python 3.11+ was not found.
@@ -89,54 +89,6 @@ echo Then run this installer again.
 pause
 exit /b 1
 
-:install_tesseract
-echo.
-echo Checking Tesseract OCR...
-echo.
-
-where tesseract >nul 2>nul
-if %errorlevel%==0 (
-    echo Tesseract OCR is already available in PATH.
-    goto done
-)
-
-if exist "%ProgramFiles%\Tesseract-OCR\tesseract.exe" (
-    echo Tesseract OCR is already installed.
-    goto done
-)
-
-if exist "%ProgramFiles(x86)%\Tesseract-OCR\tesseract.exe" (
-    echo Tesseract OCR is already installed.
-    goto done
-)
-
-where winget >nul 2>nul
-if not %errorlevel%==0 goto tesseract_manual
-
-echo Installing Tesseract OCR via winget...
-winget install --id UB-Mannheim.TesseractOCR -e --accept-package-agreements --accept-source-agreements
-if errorlevel 1 goto tesseract_failed
-
-echo.
-echo Tesseract OCR installation finished.
-goto done
-
-:tesseract_manual
-echo.
-echo Tesseract OCR was not found, and winget is not available.
-echo Lie Detector OCR needs Tesseract.
-echo Install "UB-Mannheim Tesseract OCR" manually, then set this path in MeowMeowBot if needed:
-echo C:\Program Files\Tesseract-OCR\tesseract.exe
-goto done
-
-:tesseract_failed
-echo.
-echo Tesseract OCR could not be installed automatically.
-echo You can still use the bot, but Lie Detector OCR needs Tesseract.
-echo Manual path:
-echo C:\Program Files\Tesseract-OCR\tesseract.exe
-goto done
-
 :install_failed
 echo.
 echo Installation failed. Please keep this window open and send a screenshot of the red error above.
@@ -147,5 +99,6 @@ exit /b 1
 :done
 echo.
 echo Done. You can now start MeowMeowBot.vbs or MeowMeowBot.lnk.
-echo.
+echo Note: on first start, EasyOCR will download its text recognition model (~100 MB). This requires an internet connection once.
+echo
 pause
