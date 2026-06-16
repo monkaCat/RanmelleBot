@@ -69,7 +69,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-window-bounded-vision-v41"
+APP_VERSION = "2026-06-16-attack-release-cycle-v42"
 MAX_TEMPLATE_MATCH_CELLS = 35_000_000
 
 UI_BG = "#080414"
@@ -693,6 +693,7 @@ class AutomationBackend:
         self.dungeon_phase_until = 0
         self.ocr_active_until = 0
         self.ocr_pause_until = 0
+        self.attack_resume_at = 0
         self.suppress_enter_until = 0
         self.command_enter_guard_until = 0
         self.last_ocr_popup = None
@@ -927,7 +928,7 @@ class AutomationBackend:
         append_event_log(f"Held attack loop started. key={key} keepalive_ms={config.attack_delay_ms}")
         while not self.stop_event.is_set():
             current = now_ms()
-            if not self.attack_loop_enabled or current < self.action_pause_until:
+            if not self.attack_loop_enabled or current < self.action_pause_until or current < self.attack_resume_at:
                 self.release_attack()
                 time.sleep(0.02)
                 continue
@@ -935,6 +936,12 @@ class AutomationBackend:
                 if not self.target_hwnd:
                     self.ensure_target_window()
                 with self.attack_lock:
+                    if self.attack_held and current - self.attack_hold_started >= 10000:
+                        self.release_attack()
+                        self.attack_resume_at = current + 2000
+                        self.log("Attack released for 2s cycle pause.")
+                        time.sleep(0.02)
+                        continue
                     if not self.attack_held or self.attack_key_held != key:
                         self.hold_attack(key)
                     keepalive_ms = max(min(config.attack_delay_ms, 2000), 250)
