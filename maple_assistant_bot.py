@@ -68,7 +68,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-17-dungeon-master-upper-label-v51"
+APP_VERSION = "2026-06-17-dungeon-master-upper-label-v52"
 MAX_TEMPLATE_MATCH_CELLS = 35_000_000
 
 UI_BG = "#080414"
@@ -2087,8 +2087,8 @@ class AutomationBackend:
             return None
         bgr = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
         hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
-        lower = np.array([18, 70, 95], dtype=np.uint8)
-        upper = np.array([45, 255, 255], dtype=np.uint8)
+        lower = np.array([12, 35, 70], dtype=np.uint8)
+        upper = np.array([70, 255, 255], dtype=np.uint8)
         mask = cv2.inRange(hsv, lower, upper)
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (17, 5))
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
@@ -2097,7 +2097,7 @@ class AutomationBackend:
         for contour in contours:
             cx, cy, cw, ch = cv2.boundingRect(contour)
             area = cv2.contourArea(contour)
-            if cw < 70 or cw > 210 or ch < 8 or ch > 38 or area < 90:
+            if cw < 45 or cw > 230 or ch < 6 or ch > 44 or area < 50:
                 continue
             if cy < 40:
                 continue
@@ -2105,11 +2105,16 @@ class AutomationBackend:
                 continue
             candidates.append((cx, cy, cw, ch, int(area)))
         if not candidates:
+            self.log("Dungeon Master label candidates: 0.")
             return None
         cx, cy, cw, ch, _ = max(candidates, key=lambda item: (item[0] + item[2], item[4]))
         label_center_x = x + cx + cw // 2
         label_center_y = y + cy + ch // 2
         npc_center_y = max(y, label_center_y - 70)
+        self.log(
+            f"Dungeon Master label candidates: {len(candidates)}; "
+            f"selected label at {label_center_x}, {label_center_y} size=({cw}, {ch})."
+        )
         return {
             "confidence": 0.75,
             "top_left": (x + cx, y + cy),
