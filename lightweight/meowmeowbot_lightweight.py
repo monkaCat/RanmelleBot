@@ -68,7 +68,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-17-lightweight-dungeon-master-window-search-v33"
+APP_VERSION = "2026-06-17-lightweight-dungeon-master-label-search-v34"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -1774,11 +1774,14 @@ class AutomationBackend:
             )
             if npc:
                 break
+            npc = self.find_dungeon_master_label(dungeon)
+            if npc:
+                break
             time.sleep(0.25)
         if not npc:
             if current - self.last_dungeon_gate_log >= 7000:
                 self.last_dungeon_gate_log = current
-                self.log("Dungeon Master image not found after entry jumps.")
+                self.log("Dungeon Master not found after entry jumps.")
             return False
         center_x, center_y = npc["center"]
         click_x = center_x + dungeon.npc_offset_x
@@ -1789,8 +1792,9 @@ class AutomationBackend:
         pyautogui.click(click_x, click_y)
         time.sleep(0.12)
         pyautogui.click(click_x, click_y)
+        source = npc.get("source", "image")
         self.log(
-            f"Dungeon Master image clicked at {click_x}, {click_y} "
+            f"Dungeon Master {source} clicked at {click_x}, {click_y} "
             f"(center {center_x}, {center_y}, offset {dungeon.npc_offset_x}, {dungeon.npc_offset_y})."
         )
         self.run_dungeon_drop_selection(dungeon)
@@ -2045,6 +2049,48 @@ class AutomationBackend:
         search_w = max(80, width - (search_x - left))
         search_h = max(80, height - 260)
         return (search_x, search_y, search_w, search_h)
+
+    def find_dungeon_master_label(self, dungeon: DungeonConfig) -> Optional[dict[str, Any]]:
+        if ImageGrab is None or cv2 is None or np is None:
+            return None
+        region = self.dungeon_master_search_region(dungeon)
+        if region is None:
+            return None
+        x, y, width, height = region
+        try:
+            screenshot = ImageGrab.grab(bbox=(x, y, x + width, y + height))
+        except Exception:
+            return None
+        bgr = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+        hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+        lower = np.array([18, 70, 95], dtype=np.uint8)
+        upper = np.array([45, 255, 255], dtype=np.uint8)
+        mask = cv2.inRange(hsv, lower, upper)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (17, 5))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        candidates: list[tuple[int, int, int, int, int]] = []
+        for contour in contours:
+            cx, cy, cw, ch = cv2.boundingRect(contour)
+            area = cv2.contourArea(contour)
+            if cw < 70 or cw > 210 or ch < 8 or ch > 38 or area < 90:
+                continue
+            if cy < 40:
+                continue
+            candidates.append((cx, cy, cw, ch, int(area)))
+        if not candidates:
+            return None
+        cx, cy, cw, ch, _ = max(candidates, key=lambda item: (item[0] + item[2], item[4]))
+        label_center_x = x + cx + cw // 2
+        label_center_y = y + cy + ch // 2
+        npc_center_y = max(y, label_center_y - 70)
+        return {
+            "confidence": 0.75,
+            "top_left": (x + cx, y + cy),
+            "center": (int(label_center_x), int(npc_center_y)),
+            "size": (int(cw), int(ch)),
+            "source": "label",
+        }
 
     def find_image(self, template_path: str, confidence: float, region: Optional[tuple[int, int, int, int]] = None) -> Optional[dict[str, Any]]:
         template_path = resolve_template_path(template_path)
