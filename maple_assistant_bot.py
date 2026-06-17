@@ -68,7 +68,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-17-dungeon-master-label-click-v50"
+APP_VERSION = "2026-06-17-dungeon-master-upper-label-v51"
 MAX_TEMPLATE_MATCH_CELLS = 35_000_000
 
 UI_BG = "#080414"
@@ -1767,13 +1767,13 @@ class AutomationBackend:
         release_modifiers()
         self.ensure_target_window()
         time.sleep(0.20)
-        for jump_index in range(3):
+        for jump_index in range(4):
             if self.should_abort_actions():
                 return False
             self.tap_key_direct("alt", 0.10)
             time.sleep(0.12)
             self.tap_key_direct("alt", 0.10)
-            self.log(f"Dungeon entry double-Alt jump {jump_index + 1}/3.")
+            self.log(f"Dungeon entry double-Alt jump {jump_index + 1}/4.")
             time.sleep(0.55)
         release_modifiers()
         time.sleep(0.65)
@@ -2068,7 +2068,7 @@ class AutomationBackend:
         if window is None:
             return None
         left, top, width, height = window
-        search_x = left + int(width * 0.35)
+        search_x = left + int(width * 0.25)
         search_y = top + 130
         search_w = max(80, width - (search_x - left))
         search_h = max(80, height - 260)
@@ -2100,6 +2100,8 @@ class AutomationBackend:
             if cw < 70 or cw > 210 or ch < 8 or ch > 38 or area < 90:
                 continue
             if cy < 40:
+                continue
+            if cy + ch // 2 > int(height * 0.55):
                 continue
             candidates.append((cx, cy, cw, ch, int(area)))
         if not candidates:
