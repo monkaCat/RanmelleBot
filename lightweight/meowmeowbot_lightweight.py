@@ -68,7 +68,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-17-lightweight-dungeon-master-upper-label-v38"
+APP_VERSION = "2026-06-17-lightweight-dungeon-master-darkbox-label-v39"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -2064,37 +2064,35 @@ class AutomationBackend:
         except Exception:
             return None
         bgr = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
-        hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
-        lower = np.array([12, 35, 70], dtype=np.uint8)
-        upper = np.array([70, 255, 255], dtype=np.uint8)
-        hsv_mask = cv2.inRange(hsv, lower, upper)
-        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-        r, g, b = cv2.split(rgb)
-        rgb_mask = (
-            (r.astype(np.int16) > 80)
-            & (g.astype(np.int16) > 70)
-            & (b.astype(np.int16) < 130)
-            & ((r.astype(np.int16) + g.astype(np.int16)) > b.astype(np.int16) * 2)
-        ).astype(np.uint8) * 255
-        mask = cv2.bitwise_or(hsv_mask, rgb_mask)
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 3))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        candidates: list[tuple[int, int, int, int, int]] = []
+        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+        # MapleStory NPC name tags render as a dark, semi-transparent rounded box with
+        # bright (white/yellow-green) text inside. Green grass/foliage in the background
+        # can share the text's hue, so we anchor on the dark box itself (a much more
+        # distinctive, stable feature) and only confirm bright text pixels inside it.
+        dark_mask = (gray < 80).astype(np.uint8) * 255
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 5))
+        closed = cv2.morphologyEx(dark_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+        contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        candidates: list[tuple[int, int, int, int, float]] = []
         for contour in contours:
             cx, cy, cw, ch = cv2.boundingRect(contour)
             area = cv2.contourArea(contour)
-            if cw < 35 or cw > 260 or ch < 5 or ch > 50 or area < 35:
+            if area < 80 or cw < 40 or ch < 8 or ch > 45:
                 continue
-            if cy < 40:
+            aspect = cw / max(ch, 1)
+            if not (1.8 <= aspect <= 14):
                 continue
-            if cy + ch // 2 > int(height * 0.55):
+            roi_gray = gray[cy:cy + ch, cx:cx + cw]
+            if roi_gray.size == 0:
                 continue
-            candidates.append((cx, cy, cw, ch, int(area)))
+            bright_ratio = float((roi_gray > 110).sum()) / float(roi_gray.size)
+            if bright_ratio < 0.30:
+                continue
+            candidates.append((cx, cy, cw, ch, bright_ratio))
         if not candidates:
             self.log("Dungeon Master label candidates: 0.")
             return None
-        cx, cy, cw, ch, _ = max(candidates, key=lambda item: (item[0] + item[2], item[4]))
+        cx, cy, cw, ch, _ = max(candidates, key=lambda item: item[4])
         label_center_x = x + cx + cw // 2
         label_center_y = y + cy + ch // 2
         npc_center_y = max(y, label_center_y - 70)
