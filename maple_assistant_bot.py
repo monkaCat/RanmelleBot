@@ -68,7 +68,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-17-dungeon-master-upper-label-v52"
+APP_VERSION = "2026-06-17-dungeon-master-upper-label-v53"
 MAX_TEMPLATE_MATCH_CELLS = 35_000_000
 
 UI_BG = "#080414"
@@ -2089,15 +2089,24 @@ class AutomationBackend:
         hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
         lower = np.array([12, 35, 70], dtype=np.uint8)
         upper = np.array([70, 255, 255], dtype=np.uint8)
-        mask = cv2.inRange(hsv, lower, upper)
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (17, 5))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+        hsv_mask = cv2.inRange(hsv, lower, upper)
+        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        r, g, b = cv2.split(rgb)
+        rgb_mask = (
+            (r.astype(np.int16) > 80)
+            & (g.astype(np.int16) > 70)
+            & (b.astype(np.int16) < 130)
+            & ((r.astype(np.int16) + g.astype(np.int16)) > b.astype(np.int16) * 2)
+        ).astype(np.uint8) * 255
+        mask = cv2.bitwise_or(hsv_mask, rgb_mask)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 3))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         candidates: list[tuple[int, int, int, int, int]] = []
         for contour in contours:
             cx, cy, cw, ch = cv2.boundingRect(contour)
             area = cv2.contourArea(contour)
-            if cw < 45 or cw > 230 or ch < 6 or ch > 44 or area < 50:
+            if cw < 35 or cw > 260 or ch < 5 or ch > 50 or area < 35:
                 continue
             if cy < 40:
                 continue
