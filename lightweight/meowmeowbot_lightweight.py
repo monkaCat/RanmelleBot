@@ -68,7 +68,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-17-lightweight-dungeon-master-label-search-v34"
+APP_VERSION = "2026-06-17-lightweight-dungeon-master-label-click-v35"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -1784,18 +1784,20 @@ class AutomationBackend:
                 self.log("Dungeon Master not found after entry jumps.")
             return False
         center_x, center_y = npc["center"]
-        click_x = center_x + dungeon.npc_offset_x
-        click_y = center_y + dungeon.npc_offset_y
+        source = npc.get("source", "image")
+        offset_x = 0 if source == "label" else dungeon.npc_offset_x
+        offset_y = 0 if source == "label" else dungeon.npc_offset_y
+        click_x = center_x + offset_x
+        click_y = center_y + offset_y
         self.ensure_target_window()
         pyautogui.moveTo(click_x, click_y, duration=0.15)
         time.sleep(0.25)
         pyautogui.click(click_x, click_y)
         time.sleep(0.12)
         pyautogui.click(click_x, click_y)
-        source = npc.get("source", "image")
         self.log(
             f"Dungeon Master {source} clicked at {click_x}, {click_y} "
-            f"(center {center_x}, {center_y}, offset {dungeon.npc_offset_x}, {dungeon.npc_offset_y})."
+            f"(center {center_x}, {center_y}, offset {offset_x}, {offset_y})."
         )
         self.run_dungeon_drop_selection(dungeon)
         return True
