@@ -68,7 +68,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-17-easyocr-dungeon-master-v45"
+APP_VERSION = "2026-06-17-direct-dungeon-alt-jump-v46"
 MAX_TEMPLATE_MATCH_CELLS = 35_000_000
 
 UI_BG = "#080414"
@@ -858,6 +858,19 @@ class AutomationBackend:
                 pyautogui.keyDown(key)
                 time.sleep(hold_seconds)
                 pyautogui.keyUp(key)
+
+    def tap_key_direct(self, key: str, hold_seconds: float = 0.10) -> None:
+        key = normalize_key(key)
+        if not key:
+            return
+        self.ensure_target_window()
+        if send_virtual_key_down(key):
+            time.sleep(max(hold_seconds, 0.02))
+            send_virtual_key_up(key)
+            return
+        pyautogui.keyDown(key)
+        time.sleep(max(hold_seconds, 0.02))
+        pyautogui.keyUp(key)
 
     def click(self, x: int, y: int) -> None:
         if x > 0 and y > 0:
@@ -1749,19 +1762,22 @@ class AutomationBackend:
         return best_region
 
     def perform_dungeon_entry_jumps(self) -> bool:
-        self.pause_attack_for_input(2500)
+        self.pause_attack_for_input(4500)
         self.release_attack()
         release_modifiers()
         self.ensure_target_window()
-        for _ in range(3):
+        time.sleep(0.20)
+        for jump_index in range(3):
             if self.should_abort_actions():
                 return False
-            self.press("alt", 0.04, force=True)
-            time.sleep(0.06)
-            self.press("alt", 0.04, force=True)
-            time.sleep(0.30)
-        time.sleep(0.35)
-        self.log("Dungeon entry movement: 3x double-Alt jump.")
+            self.tap_key_direct("alt", 0.10)
+            time.sleep(0.12)
+            self.tap_key_direct("alt", 0.10)
+            self.log(f"Dungeon entry double-Alt jump {jump_index + 1}/3.")
+            time.sleep(0.55)
+        release_modifiers()
+        time.sleep(0.65)
+        self.log("Dungeon entry movement complete; searching Dungeon Master NPC.")
         return True
 
     def start_dungeon_entry(self, dungeon: DungeonConfig, current: Optional[int] = None) -> bool:
