@@ -68,7 +68,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-17-lightweight-dungeon-master-ocr-verified-label-v40"
+APP_VERSION = "2026-06-17-lightweight-dungeon-master-ocr-scan-plus-template-v41"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -101,6 +101,7 @@ DEFAULT_IMAGES = {
     "dead": str(APP_DIR / "Detections" / "dead.png"),
     "char": str(APP_DIR / "Detections" / "ref_char.png"),
     "henesys": str(APP_DIR / "Detections" / "henesys.png"),
+    "dungeon_master": str(APP_DIR / "Detections" / "dungeon_master.png"),
 }
 
 LEGACY_DUNGEON_DIALOG_STEPS = "wait:1\npress:enter"
@@ -563,7 +564,7 @@ class DungeonConfig:
     role: str = "Leader"
     drop_option: str = "4 drops"
     custom_coins: int = 1
-    npc_image: str = DEFAULT_IMAGES["henesys"]
+    npc_image: str = DEFAULT_IMAGES["dungeon_master"]
     finish_image: str = DEFAULT_IMAGES["finish"]
     char_image: str = DEFAULT_IMAGES["char"]
     portal_image: str = ""
@@ -1773,6 +1774,17 @@ class AutomationBackend:
                 self.dungeon_master_search_region(dungeon),
             )
             if npc:
+                # The default template is a crop of the "Dungeon Master" name tag
+                # itself (not the character sprite), matching what the OCR label
+                # path returns. If the configured template is that name-tag crop,
+                # shift the click target up toward the character the same way the
+                # label path does. A custom template the user points at the actual
+                # sprite is left untouched (offset_x/offset_y still apply below).
+                template_name = os.path.basename(resolve_template_path(dungeon.npc_image) or "")
+                if template_name == os.path.basename(DEFAULT_IMAGES["dungeon_master"]):
+                    label_x, label_y = npc["center"]
+                    npc["center"] = (label_x, max(0, label_y - 70))
+                    npc["source"] = "label"
                 break
             npc = self.find_dungeon_master_label(dungeon)
             if npc:
@@ -2053,7 +2065,7 @@ class AutomationBackend:
         return (search_x, search_y, search_w, search_h)
 
     def find_dungeon_master_label(self, dungeon: DungeonConfig) -> Optional[dict[str, Any]]:
-        if ImageGrab is None or cv2 is None or np is None:
+        if ImageGrab is None or np is None:
             return None
         reader = self.get_easyocr_reader()
         if reader is None:
@@ -2066,73 +2078,61 @@ class AutomationBackend:
             screenshot = ImageGrab.grab(bbox=(x, y, x + width, y + height))
         except Exception:
             return None
-        bgr = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
-        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-        # MapleStory NPC name tags render as a dark, semi-transparent rounded box with
-        # bright (white/yellow-green) text inside. Many unrelated UI elements look almost
-        # identical this way (buff tags like "Perfectly Rested", guild tags like "Burning
-        # Beyond", other NPC names like "Guild Task Coordinator"), so box geometry alone
-        # is not enough. We collect every box-shaped dark region that looks like a name
-        # tag, then run OCR on each candidate and only accept one whose text actually
-        # reads "Dungeon Master".
-        dark_mask = (gray < 90).astype(np.uint8) * 255
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 5))
-        closed = cv2.morphologyEx(dark_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
-        contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        boxes: list[tuple[int, int, int, int, float]] = []
-        for contour in contours:
-            cx, cy, cw, ch = cv2.boundingRect(contour)
-            area = cv2.contourArea(contour)
-            if area < 80 or cw < 40 or ch < 8 or ch > 45:
-                continue
-            aspect = cw / max(ch, 1)
-            if not (1.8 <= aspect <= 14):
-                continue
-            roi_gray = gray[cy:cy + ch, cx:cx + cw]
-            if roi_gray.size == 0:
-                continue
-            bright_ratio = float((roi_gray > 110).sum()) / float(roi_gray.size)
-            if bright_ratio < 0.30:
-                continue
-            boxes.append((cx, cy, cw, ch, bright_ratio))
-        if not boxes:
+        # Run OCR directly over the whole search region. EasyOCR returns its own
+        # bounding box per detected text block, so we don't need to pre-isolate
+        # the name-tag box with color/contour heuristics first. That earlier
+        # approach was fragile: name tags are a medium-dark semi-transparent box,
+        # and morphological closing either merged it with neighboring tags/foliage
+        # in the same row (e.g. "Perfectly Rested" + "Dungeon Master") or, with a
+        # smaller kernel, shredded its edges into noise depending on the exact
+        # background behind it. Scanning text directly sidesteps both failure modes.
+        rgb_arr = np.array(screenshot)
+        try:
+            results = reader.readtext(rgb_arr, detail=1, paragraph=False)
+        except Exception as exc:
+            append_event_log(f"Dungeon Master label OCR failed: {exc}")
+            return None
+        if not results:
             self.log("Dungeon Master label candidates: 0.")
             return None
-        boxes.sort(key=lambda item: -item[4])
-        pad = 4
-        for cx, cy, cw, ch, bright_ratio in boxes:
-            rx1 = max(0, cx - pad)
-            ry1 = max(0, cy - pad)
-            rx2 = min(gray.shape[1], cx + cw + pad)
-            ry2 = min(gray.shape[0], cy + ch + pad)
-            roi = gray[ry1:ry2, rx1:rx2]
-            if roi.size == 0:
-                continue
-            scaled = cv2.resize(roi, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
-            try:
-                texts = reader.readtext(scaled, detail=0, paragraph=True)
-            except Exception as exc:
-                append_event_log(f"Dungeon Master label OCR failed: {exc}")
-                continue
-            combined = " ".join(texts).lower()
-            if "dungeon" in combined and ("master" in combined or "ma" in combined):
-                label_center_x = x + cx + cw // 2
-                label_center_y = y + cy + ch // 2
-                npc_center_y = max(y, label_center_y - 70)
-                self.log(
-                    f"Dungeon Master label candidates: {len(boxes)}; "
-                    f"matched text={combined!r} at {label_center_x}, {label_center_y} size=({cw}, {ch})."
-                )
-                return {
-                    "confidence": 0.75,
-                    "top_left": (x + cx, y + cy),
-                    "center": (int(label_center_x), int(npc_center_y)),
-                    "size": (int(cw), int(ch)),
-                    "source": "label",
-                }
-            append_event_log(f"Dungeon Master label candidate rejected, OCR text={combined!r}.")
-        self.log(f"Dungeon Master label candidates: {len(boxes)}; none matched 'Dungeon Master' text.")
-        return None
+        best = None
+        for bbox, text, conf in results:
+            normalized = text.strip().lower()
+            is_match = "dungeon" in normalized and "master" in normalized
+            if not is_match and "dungeon" in normalized and len(normalized) >= 8:
+                # Tolerate minor OCR misreads on the second word at small font sizes
+                # (e.g. "dungeon mastor", "dungeon haster") as long as "dungeon" is
+                # clean and there's a second word roughly the length of "master".
+                tail = normalized.split("dungeon", 1)[1].strip()
+                is_match = len(tail) >= 5
+            if is_match:
+                xs = [point[0] for point in bbox]
+                ys = [point[1] for point in bbox]
+                cx1, cx2 = min(xs), max(xs)
+                cy1, cy2 = min(ys), max(ys)
+                candidate = (cx1, cy1, cx2 - cx1, cy2 - cy1, float(conf), text)
+                if best is None or conf > best[4]:
+                    best = candidate
+        if best is None:
+            sample = ", ".join(repr(t) for _, t, _ in results[:8])
+            self.log(f"Dungeon Master label candidates: {len(results)}; none matched 'Dungeon Master' text.")
+            append_event_log(f"Dungeon Master OCR texts seen: {sample}")
+            return None
+        cx, cy, cw, ch, conf, matched_text = best
+        label_center_x = x + cx + cw / 2
+        label_center_y = y + cy + ch / 2
+        npc_center_y = max(y, label_center_y - 70)
+        self.log(
+            f"Dungeon Master label matched text={matched_text!r} (conf={conf:.2f}) "
+            f"at {int(label_center_x)}, {int(label_center_y)} size=({int(cw)}, {int(ch)})."
+        )
+        return {
+            "confidence": 0.75,
+            "top_left": (int(x + cx), int(y + cy)),
+            "center": (int(label_center_x), int(npc_center_y)),
+            "size": (int(cw), int(ch)),
+            "source": "label",
+        }
 
     def find_image(self, template_path: str, confidence: float, region: Optional[tuple[int, int, int, int]] = None) -> Optional[dict[str, Any]]:
         template_path = resolve_template_path(template_path)
