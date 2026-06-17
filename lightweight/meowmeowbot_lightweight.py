@@ -19,7 +19,7 @@ import time
 import traceback
 import ctypes
 from ctypes import wintypes
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields as dataclass_fields
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -68,7 +68,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-15-lightweight-skill-first-command-v25"
+APP_VERSION = "2026-06-17-lightweight-dungeon-master-v30"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -1452,26 +1452,15 @@ class AutomationBackend:
         dungeon = config.dungeon
         if not dungeon.enabled:
             return False
-        henesys_visible = self.is_henesys_visible(dungeon)
         if dungeon.role == "Leecher":
             if not self.dungeon_entry_started:
                 self.dungeon_entry_started = True
                 self.log("Dungeon role is Leecher; combat automation is disabled.")
             return False
         if not self.dungeon_entry_started:
-            if current - self.last_dungeon_entry_check >= 2000:
+            if current - self.last_dungeon_entry_check >= 7000:
                 self.last_dungeon_entry_check = current
-                if not henesys_visible:
-                    if current - self.last_dungeon_gate_log >= 7000:
-                        self.last_dungeon_gate_log = current
-                        self.log("Henesys/NPC image not visible; skipping dungeon NPC cycle.")
-                    return True
-                self.dungeon_entry_started = self.start_dungeon_entry(dungeon, current, henesys_visible=True)
-            return False
-        if henesys_visible:
-            if current - self.last_dungeon_gate_log >= 7000:
-                self.last_dungeon_gate_log = current
-                self.log("Henesys/NPC image visible; dungeon combat paused.")
+                self.dungeon_entry_started = self.start_dungeon_entry(dungeon, current)
             return False
         finish = self.find_image(dungeon.finish_image, dungeon.confidence)
         if finish and not self.finish_handled:
@@ -1499,9 +1488,6 @@ class AutomationBackend:
             self.dungeon_phase_until = current + cycle_ms
             return True
         return self.dungeon_cycle_phase == "attack"
-
-    def is_henesys_visible(self, dungeon: DungeonConfig) -> bool:
-        return self.find_image(dungeon.npc_image, min(dungeon.confidence, 0.65)) is not None
 
     def find_ocr_popup(self, ocr: OcrConfig) -> Optional[dict[str, Any]]:
         if not ocr.popup_image:
@@ -1725,13 +1711,31 @@ class AutomationBackend:
         )
         return best_region
 
-    def start_dungeon_entry(self, dungeon: DungeonConfig, current: Optional[int] = None, henesys_visible: Optional[bool] = None) -> bool:
+    def perform_dungeon_entry_jumps(self) -> bool:
+        self.pause_attack_for_input(2500)
+        self.release_attack()
+        release_modifiers()
+        self.ensure_target_window()
+        for _ in range(3):
+            if self.should_abort_actions():
+                return False
+            self.press("alt", 0.04, force=True)
+            time.sleep(0.06)
+            self.press("alt", 0.04, force=True)
+            time.sleep(0.30)
+        time.sleep(0.35)
+        self.log("Dungeon entry movement: 3x double-Alt jump.")
+        return True
+
+    def start_dungeon_entry(self, dungeon: DungeonConfig, current: Optional[int] = None) -> bool:
         current = current or now_ms()
+        if not self.perform_dungeon_entry_jumps():
+            return False
         npc = self.find_image(dungeon.npc_image, min(dungeon.confidence, 0.65))
         if not npc:
             if current - self.last_dungeon_gate_log >= 7000:
                 self.last_dungeon_gate_log = current
-                self.log("Henesys/NPC image not visible; skipping dungeon NPC cycle.")
+                self.log("Dungeon Master NPC image not found after entry jumps.")
             return False
         if dungeon.npc_offset_x > 0 and dungeon.npc_offset_y > 0:
             click_x = dungeon.npc_offset_x
@@ -1744,7 +1748,7 @@ class AutomationBackend:
         pyautogui.click(click_x, click_y)
         time.sleep(0.12)
         pyautogui.click(click_x, click_y)
-        self.log(f"NPC clicked at {click_x}, {click_y}.")
+        self.log(f"Dungeon Master NPC clicked at {click_x}, {click_y}.")
         self.run_dungeon_drop_selection(dungeon)
         return True
 
@@ -1968,7 +1972,7 @@ class AutomationBackend:
         self.log("Portal confirmation sent: Space.")
         wait_seconds = max(dungeon.henesys_wait_after_exit_sec, 0)
         if wait_seconds:
-            self.log(f"Waiting in Henesys after exit: {wait_seconds}s.")
+            self.log(f"Waiting after dungeon exit: {wait_seconds}s.")
             time.sleep(wait_seconds)
         self.dungeon_entry_started = False
 
@@ -2513,7 +2517,7 @@ class MapleBotApp(tk.Tk):
 
         images = ttk.LabelFrame(tab, text="Images")
         images.pack(fill="x", pady=5)
-        self.path_row(images, "NPC image", self.vars["dungeon_npc_image"])
+        self.path_row(images, "Dungeon Master image", self.vars["dungeon_npc_image"])
         self.path_row(images, "Finish banner", self.vars["dungeon_finish_image"])
         self.path_row(images, "Purple portal image", self.vars["dungeon_portal_image"])
         self.inline_entries(images, [("Confidence", "dungeon_confidence")])
@@ -2548,11 +2552,11 @@ class MapleBotApp(tk.Tk):
         pos.pack(fill="x", pady=5)
         self.inline_entries(pos, [
             ("Minimap Home X", "dungeon_home_x"), ("Minimap Home Y", "dungeon_home_y"), ("Tolerance px", "dungeon_tolerance_px"),
-            ("NPC click X", "dungeon_npc_offset_x"), ("NPC click Y", "dungeon_npc_offset_y"),
+            ("Dungeon Master X", "dungeon_npc_offset_x"), ("Dungeon Master Y", "dungeon_npc_offset_y"),
             ("Portal offset X", "dungeon_portal_offset_x"), ("Portal offset Y", "dungeon_portal_offset_y"),
             ("Portal X", "dungeon_portal_x"), ("Portal Y", "dungeon_portal_y"),
             ("Death OK X", "dungeon_death_ok_x"), ("Death OK Y", "dungeon_death_ok_y"),
-            ("Wait in Henesys (sec)", "dungeon_henesys_wait_after_exit_sec"),
+            ("Wait after exit (sec)", "dungeon_henesys_wait_after_exit_sec"),
             ("Check home every (ms)", "dungeon_return_home_every_ms"),
         ])
 
@@ -3105,7 +3109,8 @@ class MapleBotApp(tk.Tk):
             merged = {"mode": "Farming", **item}
             cfg.detectors.append(DetectorConfig(**merged))
         ocr_raw = {**asdict(cfg)["ocr"], **raw.get("ocr", {})}
-        ocr_raw.pop("tesseract_path", None)
+        allowed_ocr_keys = {item.name for item in dataclass_fields(OcrConfig)}
+        ocr_raw = {key: value for key, value in ocr_raw.items() if key in allowed_ocr_keys}
         ocr_raw.setdefault("cookbot_label_preset", True)
         cfg.ocr = OcrConfig(**ocr_raw)
         dungeon_raw = {**asdict(cfg)["dungeon"], **raw.get("dungeon", {})}

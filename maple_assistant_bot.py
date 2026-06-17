@@ -4,10 +4,9 @@ MeowMeowBot
 Desktop automation helper for private MapleStory servers where macroing is allowed.
 
 Install runtime dependencies in your own Python environment:
-    pip install pyautogui pillow opencv-python numpy pytesseract
+    pip install pyautogui pillow opencv-python numpy easyocr
 
-Optional:
-    Install Tesseract OCR for Windows and set its path in the Settings tab.
+OCR engine: EasyOCR (no external binary required, runs fully in Python).
 """
 
 from __future__ import annotations
@@ -20,7 +19,7 @@ import time
 import traceback
 import ctypes
 from ctypes import wintypes
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields as dataclass_fields
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -44,9 +43,9 @@ except Exception:  # pragma: no cover
     win32gui = None
 
 try:
-    import pytesseract
+    import easyocr
 except Exception:  # pragma: no cover
-    pytesseract = None
+    easyocr = None
 
 try:
     import cv2
@@ -69,7 +68,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-16-reliable-f2-stop-v44"
+APP_VERSION = "2026-06-17-easyocr-dungeon-master-v45"
 MAX_TEMPLATE_MATCH_CELLS = 35_000_000
 
 UI_BG = "#080414"
@@ -558,7 +557,6 @@ class OcrConfig:
     popup_settle_delay_ms: int = 3000
     retry_delay_ms: int = 1500
     result_delay_ms: int = 800
-    tesseract_path: str = ""
 
 
 @dataclass
@@ -660,6 +658,7 @@ class AutomationBackend:
         self.ocr_pause_until = 0
         self.ocr_active_until = 0
         self.last_ocr_popup: Optional[dict[str, Any]] = None
+        self._easyocr_reader: Any = None
         self.last_attack_log = 0
         self.last_attack_pulse = 0
         self.attack_held = False
@@ -732,8 +731,8 @@ class AutomationBackend:
             missing.append("opencv-python")
         if np is None:
             missing.append("numpy")
-        if pytesseract is None:
-            missing.append("pytesseract")
+        if easyocr is None:
+            missing.append("easyocr")
         if missing:
             raise RuntimeError("Missing dependencies: " + ", ".join(missing))
         pyautogui.FAILSAFE = True
@@ -1139,8 +1138,6 @@ class AutomationBackend:
         if current - self.last_detector.get("__ocr__", 0) < max(ocr.check_interval_ms, 500):
             return current < self.ocr_active_until
         self.last_detector["__ocr__"] = current
-        if ocr.tesseract_path and pytesseract is not None:
-            pytesseract.pytesseract.tesseract_cmd = ocr.tesseract_path
         popup = self.find_ocr_popup(ocr)
         if not popup:
             self.ocr_last_answer = ""
@@ -1393,6 +1390,13 @@ class AutomationBackend:
         point_x, point_y = self.ocr_point(ocr, x, y)
         return point_x, point_y, width, height
 
+    def get_easyocr_reader(self) -> Any:
+        if self._easyocr_reader is None:
+            if easyocr is None:
+                return None
+            self._easyocr_reader = easyocr.Reader(["en"], gpu=False, verbose=False)
+        return self._easyocr_reader
+
     def read_text_region(
         self,
         x: int,
@@ -1402,8 +1406,9 @@ class AutomationBackend:
         psm_modes: tuple[str, ...] = ("6", "7"),
         save_name: str = "last_ocr_crop.png",
     ) -> str:
-        if pytesseract is None:
-            self.log("pytesseract is not installed.")
+        reader = self.get_easyocr_reader()
+        if reader is None:
+            self.log("easyocr is not installed.")
             return ""
         if ImageGrab is None:
             return ""
@@ -1416,13 +1421,25 @@ class AutomationBackend:
         processed_images = self.prepare_ocr_images(img)
         candidates = []
         for processed in processed_images:
-            for psm in psm_modes:
-                config = f"--oem 3 --psm {psm} -c tessedit_char_whitelist={OCR_ALLOWED_CHARS}"
-                candidate = clean_ocr_text(pytesseract.image_to_string(processed, config=config))
-                candidates.append(candidate)
-                if is_valid_ld_code(candidate):
-                    append_event_log(f"OCR early valid candidate from {save_name}: {candidate}")
-                    return candidate
+            if np is not None:
+                arr = np.array(processed.convert("L"))
+            else:
+                arr = processed
+            try:
+                results = reader.readtext(
+                    arr,
+                    allowlist=OCR_ALLOWED_CHARS,
+                    detail=0,
+                    paragraph=False,
+                )
+            except Exception as exc:
+                append_event_log(f"EasyOCR read failed for {save_name}: {exc}")
+                continue
+            candidate = clean_ocr_text("".join(results))
+            candidates.append(candidate)
+            if is_valid_ld_code(candidate):
+                append_event_log(f"OCR early valid candidate from {save_name}: {candidate}")
+                return candidate
         append_event_log(f"OCR candidates from {save_name}: {candidates}")
         valid = [candidate for candidate in candidates if is_valid_ld_code(candidate)]
         if valid:
@@ -1471,26 +1488,15 @@ class AutomationBackend:
         dungeon = config.dungeon
         if not dungeon.enabled:
             return False
-        henesys_visible = self.is_henesys_visible(dungeon)
         if dungeon.role == "Leecher":
             if not self.dungeon_entry_started:
                 self.dungeon_entry_started = True
                 self.log("Dungeon role is Leecher; combat automation is disabled.")
             return False
         if not self.dungeon_entry_started:
-            if current - self.last_dungeon_entry_check >= 2000:
+            if current - self.last_dungeon_entry_check >= 7000:
                 self.last_dungeon_entry_check = current
-                if not henesys_visible:
-                    if current - self.last_dungeon_gate_log >= 7000:
-                        self.last_dungeon_gate_log = current
-                        self.log("Henesys/NPC image not visible; skipping dungeon NPC cycle.")
-                    return True
-                self.dungeon_entry_started = self.start_dungeon_entry(dungeon, current, henesys_visible=True)
-            return False
-        if henesys_visible:
-            if current - self.last_dungeon_gate_log >= 7000:
-                self.last_dungeon_gate_log = current
-                self.log("Henesys/NPC image visible; dungeon combat paused.")
+                self.dungeon_entry_started = self.start_dungeon_entry(dungeon, current)
             return False
         finish = self.find_image(dungeon.finish_image, dungeon.confidence)
         if finish and not self.finish_handled:
@@ -1518,9 +1524,6 @@ class AutomationBackend:
             self.dungeon_phase_until = current + cycle_ms
             return True
         return self.dungeon_cycle_phase == "attack"
-
-    def is_henesys_visible(self, dungeon: DungeonConfig) -> bool:
-        return self.find_image(dungeon.npc_image, min(dungeon.confidence, 0.65)) is not None
 
     def find_ocr_popup(self, ocr: OcrConfig) -> Optional[dict[str, Any]]:
         if not ocr.popup_image:
@@ -1745,13 +1748,31 @@ class AutomationBackend:
         )
         return best_region
 
-    def start_dungeon_entry(self, dungeon: DungeonConfig, current: Optional[int] = None, henesys_visible: Optional[bool] = None) -> bool:
+    def perform_dungeon_entry_jumps(self) -> bool:
+        self.pause_attack_for_input(2500)
+        self.release_attack()
+        release_modifiers()
+        self.ensure_target_window()
+        for _ in range(3):
+            if self.should_abort_actions():
+                return False
+            self.press("alt", 0.04, force=True)
+            time.sleep(0.06)
+            self.press("alt", 0.04, force=True)
+            time.sleep(0.30)
+        time.sleep(0.35)
+        self.log("Dungeon entry movement: 3x double-Alt jump.")
+        return True
+
+    def start_dungeon_entry(self, dungeon: DungeonConfig, current: Optional[int] = None) -> bool:
         current = current or now_ms()
+        if not self.perform_dungeon_entry_jumps():
+            return False
         npc = self.find_image(dungeon.npc_image, min(dungeon.confidence, 0.65))
         if not npc:
             if current - self.last_dungeon_gate_log >= 7000:
                 self.last_dungeon_gate_log = current
-                self.log("Henesys/NPC image not visible; skipping dungeon NPC cycle.")
+                self.log("Dungeon Master NPC image not found after entry jumps.")
             return False
         if dungeon.npc_offset_x > 0 and dungeon.npc_offset_y > 0:
             click_x = dungeon.npc_offset_x
@@ -1764,7 +1785,7 @@ class AutomationBackend:
         pyautogui.click(click_x, click_y)
         time.sleep(0.12)
         pyautogui.click(click_x, click_y)
-        self.log(f"NPC clicked at {click_x}, {click_y}.")
+        self.log(f"Dungeon Master NPC clicked at {click_x}, {click_y}.")
         self.run_dungeon_drop_selection(dungeon)
         return True
 
@@ -1988,7 +2009,7 @@ class AutomationBackend:
         self.log("Portal confirmation sent: Space.")
         wait_seconds = max(dungeon.henesys_wait_after_exit_sec, 0)
         if wait_seconds:
-            self.log(f"Waiting in Henesys after exit: {wait_seconds}s.")
+            self.log(f"Waiting after dungeon exit: {wait_seconds}s.")
             time.sleep(wait_seconds)
         self.dungeon_entry_started = False
 
@@ -2491,7 +2512,6 @@ class MapleBotApp(tk.Tk):
         self.vars["ocr_popup_settle_delay_ms"] = tk.StringVar()
         self.vars["ocr_retry_delay_ms"] = tk.StringVar()
         self.vars["ocr_result_delay_ms"] = tk.StringVar()
-        self.vars["ocr_tesseract_path"] = tk.StringVar()
 
         ttk.Checkbutton(tab, text="Enable Lie Detector OCR (Farming only)", variable=self.vars["ocr_enabled"]).pack(anchor="w", pady=(0, 10))
         popup = ttk.LabelFrame(tab, text="Popup detection")
@@ -2523,10 +2543,6 @@ class MapleBotApp(tk.Tk):
             ("Result delay (ms)", "ocr_result_delay_ms"),
         ])
 
-        settings = ttk.LabelFrame(tab, text="Tesseract")
-        settings.pack(fill="x", pady=6)
-        self.path_row(settings, "tesseract.exe path", self.vars["ocr_tesseract_path"])
-
     def build_dungeon_tab(self) -> None:
         tab = self.create_scrollable_tab("Dungeon")
         self.vars["dungeon_enabled"] = tk.BooleanVar(value=True)
@@ -2557,7 +2573,7 @@ class MapleBotApp(tk.Tk):
 
         images = ttk.LabelFrame(tab, text="Images")
         images.pack(fill="x", pady=5)
-        self.path_row(images, "NPC image", self.vars["dungeon_npc_image"])
+        self.path_row(images, "Dungeon Master image", self.vars["dungeon_npc_image"])
         self.path_row(images, "Finish banner", self.vars["dungeon_finish_image"])
         self.path_row(images, "Purple portal image", self.vars["dungeon_portal_image"])
         self.inline_entries(images, [("Confidence", "dungeon_confidence")])
@@ -2592,11 +2608,11 @@ class MapleBotApp(tk.Tk):
         pos.pack(fill="x", pady=5)
         self.inline_entries(pos, [
             ("Minimap Home X", "dungeon_home_x"), ("Minimap Home Y", "dungeon_home_y"), ("Tolerance px", "dungeon_tolerance_px"),
-            ("NPC click X", "dungeon_npc_offset_x"), ("NPC click Y", "dungeon_npc_offset_y"),
+            ("Dungeon Master X", "dungeon_npc_offset_x"), ("Dungeon Master Y", "dungeon_npc_offset_y"),
             ("Portal offset X", "dungeon_portal_offset_x"), ("Portal offset Y", "dungeon_portal_offset_y"),
             ("Portal X", "dungeon_portal_x"), ("Portal Y", "dungeon_portal_y"),
             ("Death OK X", "dungeon_death_ok_x"), ("Death OK Y", "dungeon_death_ok_y"),
-            ("Wait in Henesys (sec)", "dungeon_henesys_wait_after_exit_sec"),
+            ("Wait after exit (sec)", "dungeon_henesys_wait_after_exit_sec"),
             ("Check home every (ms)", "dungeon_return_home_every_ms"),
         ])
 
@@ -2988,7 +3004,6 @@ class MapleBotApp(tk.Tk):
             parse_int(self.vars["ocr_popup_settle_delay_ms"].get(), 3000),
             parse_int(self.vars["ocr_retry_delay_ms"].get(), 1500),
             parse_int(self.vars["ocr_result_delay_ms"].get(), 800),
-            self.vars["ocr_tesseract_path"].get(),
         )
         cfg.dungeon = DungeonConfig(
             self.vars["mode"].get() == "Dungeon" or self.vars["dungeon_enabled"].get(),
@@ -3077,7 +3092,6 @@ class MapleBotApp(tk.Tk):
         self.vars["ocr_popup_settle_delay_ms"].set(str(ocr.popup_settle_delay_ms))
         self.vars["ocr_retry_delay_ms"].set(str(ocr.retry_delay_ms))
         self.vars["ocr_result_delay_ms"].set(str(ocr.result_delay_ms))
-        self.vars["ocr_tesseract_path"].set(ocr.tesseract_path)
         dungeon = cfg.dungeon
         self.vars["dungeon_enabled"].set(dungeon.enabled)
         self.vars["dungeon_role"].set(dungeon.role)
@@ -3157,6 +3171,8 @@ class MapleBotApp(tk.Tk):
             merged = {"mode": "Farming", **item}
             cfg.detectors.append(DetectorConfig(**merged))
         ocr_raw = {**asdict(cfg)["ocr"], **raw.get("ocr", {})}
+        allowed_ocr_keys = {item.name for item in dataclass_fields(OcrConfig)}
+        ocr_raw = {key: value for key, value in ocr_raw.items() if key in allowed_ocr_keys}
         ocr_raw.setdefault("cookbot_label_preset", True)
         cfg.ocr = OcrConfig(**ocr_raw)
         dungeon_raw = {**asdict(cfg)["dungeon"], **raw.get("dungeon", {})}
