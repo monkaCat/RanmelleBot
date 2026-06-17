@@ -68,7 +68,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-17-direct-dungeon-alt-jump-v46"
+APP_VERSION = "2026-06-17-dungeon-master-image-search-v47"
 MAX_TEMPLATE_MATCH_CELLS = 35_000_000
 
 UI_BG = "#080414"
@@ -581,8 +581,8 @@ class DungeonConfig:
     home_x: int = 0
     home_y: int = 0
     tolerance_px: int = 12
-    npc_offset_x: int = 10
-    npc_offset_y: int = 10
+    npc_offset_x: int = 0
+    npc_offset_y: int = 0
     portal_offset_x: int = 0
     portal_offset_y: int = 0
     portal_x: int = 0
@@ -1784,24 +1784,33 @@ class AutomationBackend:
         current = current or now_ms()
         if not self.perform_dungeon_entry_jumps():
             return False
-        npc = self.find_image(dungeon.npc_image, min(dungeon.confidence, 0.65))
+        npc = None
+        search_until = now_ms() + 4500
+        while now_ms() < search_until:
+            if self.should_abort_actions():
+                return False
+            npc = self.find_image(dungeon.npc_image, min(dungeon.confidence, 0.65))
+            if npc:
+                break
+            time.sleep(0.25)
         if not npc:
             if current - self.last_dungeon_gate_log >= 7000:
                 self.last_dungeon_gate_log = current
-                self.log("Dungeon Master NPC image not found after entry jumps.")
+                self.log("Dungeon Master image not found after entry jumps.")
             return False
-        if dungeon.npc_offset_x > 0 and dungeon.npc_offset_y > 0:
-            click_x = dungeon.npc_offset_x
-            click_y = dungeon.npc_offset_y
-        else:
-            click_x, click_y = npc["center"]
+        center_x, center_y = npc["center"]
+        click_x = center_x + dungeon.npc_offset_x
+        click_y = center_y + dungeon.npc_offset_y
         self.ensure_target_window()
         pyautogui.moveTo(click_x, click_y, duration=0.15)
         time.sleep(0.25)
         pyautogui.click(click_x, click_y)
         time.sleep(0.12)
         pyautogui.click(click_x, click_y)
-        self.log(f"Dungeon Master NPC clicked at {click_x}, {click_y}.")
+        self.log(
+            f"Dungeon Master image clicked at {click_x}, {click_y} "
+            f"(center {center_x}, {center_y}, offset {dungeon.npc_offset_x}, {dungeon.npc_offset_y})."
+        )
         self.run_dungeon_drop_selection(dungeon)
         return True
 
@@ -2624,7 +2633,7 @@ class MapleBotApp(tk.Tk):
         pos.pack(fill="x", pady=5)
         self.inline_entries(pos, [
             ("Minimap Home X", "dungeon_home_x"), ("Minimap Home Y", "dungeon_home_y"), ("Tolerance px", "dungeon_tolerance_px"),
-            ("Dungeon Master X", "dungeon_npc_offset_x"), ("Dungeon Master Y", "dungeon_npc_offset_y"),
+            ("DM offset X", "dungeon_npc_offset_x"), ("DM offset Y", "dungeon_npc_offset_y"),
             ("Portal offset X", "dungeon_portal_offset_x"), ("Portal offset Y", "dungeon_portal_offset_y"),
             ("Portal X", "dungeon_portal_x"), ("Portal Y", "dungeon_portal_y"),
             ("Death OK X", "dungeon_death_ok_x"), ("Death OK Y", "dungeon_death_ok_y"),
@@ -3042,8 +3051,8 @@ class MapleBotApp(tk.Tk):
             parse_int(self.vars["dungeon_home_x"].get(), 0),
             parse_int(self.vars["dungeon_home_y"].get(), 0),
             parse_int(self.vars["dungeon_tolerance_px"].get(), 12),
-            parse_int(self.vars["dungeon_npc_offset_x"].get(), 10),
-            parse_int(self.vars["dungeon_npc_offset_y"].get(), 10),
+            parse_int(self.vars["dungeon_npc_offset_x"].get(), 0),
+            parse_int(self.vars["dungeon_npc_offset_y"].get(), 0),
             parse_int(self.vars["dungeon_portal_offset_x"].get(), 0),
             parse_int(self.vars["dungeon_portal_offset_y"].get(), 0),
             parse_int(self.vars["dungeon_portal_x"].get(), 0),
