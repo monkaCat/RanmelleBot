@@ -68,7 +68,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-17-dungeon-master-image-search-v47"
+APP_VERSION = "2026-06-17-dungeon-master-window-search-v48"
 MAX_TEMPLATE_MATCH_CELLS = 35_000_000
 
 UI_BG = "#080414"
@@ -1789,7 +1789,11 @@ class AutomationBackend:
         while now_ms() < search_until:
             if self.should_abort_actions():
                 return False
-            npc = self.find_image(dungeon.npc_image, min(dungeon.confidence, 0.65))
+            npc = self.find_image(
+                dungeon.npc_image,
+                max(dungeon.confidence, 0.78),
+                self.dungeon_master_search_region(dungeon),
+            )
             if npc:
                 break
             time.sleep(0.25)
@@ -2049,6 +2053,20 @@ class AutomationBackend:
         if dungeon.playfield_w <= 0 or dungeon.playfield_h <= 0:
             return None
         return (dungeon.playfield_x, dungeon.playfield_y, dungeon.playfield_w, dungeon.playfield_h)
+
+    def dungeon_master_search_region(self, dungeon: DungeonConfig) -> Optional[tuple[int, int, int, int]]:
+        region = self.dungeon_playfield_region(dungeon)
+        if region is not None:
+            return region
+        window = self.target_window_region()
+        if window is None:
+            return None
+        left, top, width, height = window
+        search_x = left + int(width * 0.35)
+        search_y = top + 130
+        search_w = max(80, width - (search_x - left))
+        search_h = max(80, height - 260)
+        return (search_x, search_y, search_w, search_h)
 
     def find_image(self, template_path: str, confidence: float, region: Optional[tuple[int, int, int, int]] = None) -> Optional[dict[str, Any]]:
         template_path = resolve_template_path(template_path)
