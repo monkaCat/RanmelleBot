@@ -68,7 +68,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-17-lightweight-dungeon-master-ocr-scan-plus-template-v41"
+APP_VERSION = "2026-06-17-lightweight-cookbot-offset-fix-v43"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -102,6 +102,7 @@ DEFAULT_IMAGES = {
     "char": str(APP_DIR / "Detections" / "ref_char.png"),
     "henesys": str(APP_DIR / "Detections" / "henesys.png"),
     "dungeon_master": str(APP_DIR / "Detections" / "dungeon_master.png"),
+    "end_chat": str(APP_DIR / "Detections" / "end_chat.png"),
 }
 
 LEGACY_DUNGEON_DIALOG_STEPS = "wait:1\npress:enter"
@@ -127,7 +128,7 @@ OCR_REJECT_KEYWORDS = (
     "WINDOW", "CONFIG", "CURSOR", "DETECTOR", "DUNGEON", "HENESYS", "ATTACK",
     "BUFF", "SKILL", "PROFILE", "CONTROL", "OCR", "ENTERX2",
 )
-COOKBOT_CODE_OFFSET = (92, -47, 220, 24)
+COOKBOT_CODE_OFFSET = (100, -30, 358, 22)
 COOKBOT_INPUT_OFFSET = (164, -16)
 COOKBOT_RESULT_OFFSET = (156, -74, 360, 82)
 COOKBOT_CODE_SEARCH_OFFSET = (100, -88, 430, 92)
@@ -591,6 +592,7 @@ class DungeonConfig:
     henesys_wait_after_exit_sec: int = 10
     dialog_steps: str = ""
     return_home_every_ms: int = 750
+    end_chat_image: str = DEFAULT_IMAGES["end_chat"]
 
 
 @dataclass
@@ -1294,7 +1296,7 @@ class AutomationBackend:
 
     def read_ocr_region(self, ocr: OcrConfig) -> str:
         x, y, width, height = self.ld_code_region(ocr)
-        if width > 260 or height > 80:
+        if width > 400 or height > 80:
             self.log("OCR code region looks too large; skipped OCR.")
             append_event_log(
                 f"Lie Detector code region likely wrong. region=({x}, {y}, {width}, {height}). "
@@ -1475,6 +1477,18 @@ class AutomationBackend:
         color_mask = np.full(gray_up.shape, 255, dtype=np.uint8)
         color_mask[color_ink] = 0
         variants.append(Image.fromarray(color_mask))
+        # Blue-channel isolation: useful when the code text is rendered in blue
+        # (e.g. CookBot uses dark-blue text on a white dialog background, which
+        # collapses to medium-gray in grayscale and can get washed out by Otsu).
+        # Subtracting the average of R and G from B emphasises blue ink while
+        # suppressing neutral gray background pixels.
+        blue_ch = rgb[:, :, 2].astype(np.int16)
+        avg_rg = (rgb[:, :, 0].astype(np.int16) + rgb[:, :, 1].astype(np.int16)) // 2
+        blue_diff_arr = np.clip(blue_ch - avg_rg + 30, 0, 255).astype(np.uint8)
+        blue_diff_up = cv2.resize(blue_diff_arr, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+        _, blue_thresh = cv2.threshold(blue_diff_up, 30, 255, cv2.THRESH_BINARY)
+        blue_inv = cv2.bitwise_not(blue_thresh)
+        variants.append(Image.fromarray(blue_inv))
         return variants
 
     def run_dungeon(self, config: BotConfig, current: int) -> bool:
@@ -1701,7 +1715,7 @@ class AutomationBackend:
                 continue
             min_x, max_x = bounds
             crop_w = max_x - min_x + 1
-            if crop_w < 35 or crop_w > 180:
+            if crop_w < 35 or crop_w > 260:
                 continue
             if start < 28 or end > input_line_y - 7:
                 continue
@@ -1759,10 +1773,16 @@ class AutomationBackend:
         self.log("Dungeon entry movement complete; searching Dungeon Master NPC.")
         return True
 
+    def is_dungeon_dialog_open(self, dungeon: DungeonConfig) -> bool:
+        """Return True if the NPC coin-selection dialog is currently visible on screen."""
+        match = self.find_image(dungeon.end_chat_image, 0.80)
+        return match is not None
+
     def start_dungeon_entry(self, dungeon: DungeonConfig, current: Optional[int] = None) -> bool:
         current = current or now_ms()
         if not self.perform_dungeon_entry_jumps():
             return False
+        # Locate the Dungeon Master NPC (image template first, OCR label as fallback).
         npc = None
         search_until = now_ms() + 4500
         while now_ms() < search_until:
@@ -1774,12 +1794,6 @@ class AutomationBackend:
                 self.dungeon_master_search_region(dungeon),
             )
             if npc:
-                # The default template is a crop of the "Dungeon Master" name tag
-                # itself (not the character sprite), matching what the OCR label
-                # path returns. If the configured template is that name-tag crop,
-                # shift the click target up toward the character the same way the
-                # label path does. A custom template the user points at the actual
-                # sprite is left untouched (offset_x/offset_y still apply below).
                 template_name = os.path.basename(resolve_template_path(dungeon.npc_image) or "")
                 if template_name == os.path.basename(DEFAULT_IMAGES["dungeon_master"]):
                     label_x, label_y = npc["center"]
@@ -1802,15 +1816,37 @@ class AutomationBackend:
         click_x = center_x + offset_x
         click_y = center_y + offset_y
         self.ensure_target_window()
-        pyautogui.moveTo(click_x, click_y, duration=0.15)
-        time.sleep(0.25)
-        pyautogui.click(click_x, click_y)
-        time.sleep(0.12)
-        pyautogui.click(click_x, click_y)
-        self.log(
-            f"Dungeon Master {source} clicked at {click_x}, {click_y} "
-            f"(center {center_x}, {center_y}, offset {offset_x}, {offset_y})."
-        )
+        # Click the NPC and wait for the dialog to open. Retry up to 3 times
+        # in case the first click didn't register (lag, NPC moving, double-click
+        # too fast, etc.). Without this check the bot would blindly send
+        # Down/Enter keypresses into the game world instead of the dialog.
+        dialog_open = False
+        for attempt in range(1, 4):
+            pyautogui.moveTo(click_x, click_y, duration=0.15)
+            time.sleep(0.25)
+            pyautogui.click(click_x, click_y)
+            time.sleep(0.12)
+            pyautogui.click(click_x, click_y)
+            self.log(
+                f"Dungeon Master {source} clicked at {click_x}, {click_y} "
+                f"(center {center_x}, {center_y}, offset {offset_x}, {offset_y}, attempt {attempt}/3)."
+            )
+            # Wait up to 2 s for the END CHAT button to become visible.
+            wait_until = now_ms() + 2000
+            while now_ms() < wait_until:
+                if self.should_abort_actions():
+                    return False
+                if self.is_dungeon_dialog_open(dungeon):
+                    dialog_open = True
+                    break
+                time.sleep(0.15)
+            if dialog_open:
+                break
+            self.log(f"Dungeon dialog not detected after attempt {attempt}/3 — retrying NPC click.")
+            time.sleep(0.3)
+        if not dialog_open:
+            self.log("Dungeon dialog did not open after 3 NPC click attempts — skipping drop selection.")
+            return False
         self.run_dungeon_drop_selection(dungeon)
         return True
 
@@ -2644,7 +2680,7 @@ class MapleBotApp(tk.Tk):
         self.vars["dungeon_drop_option"] = tk.StringVar()
         self.vars["dungeon_custom_coins"] = tk.StringVar()
         for key in [
-            "dungeon_npc_image", "dungeon_finish_image", "dungeon_char_image", "dungeon_portal_image", "dungeon_confidence",
+            "dungeon_npc_image", "dungeon_finish_image", "dungeon_char_image", "dungeon_portal_image", "dungeon_end_chat_image", "dungeon_confidence",
             "dungeon_playfield_x", "dungeon_playfield_y", "dungeon_playfield_w", "dungeon_playfield_h",
             "dungeon_minimap_x", "dungeon_minimap_y", "dungeon_minimap_w", "dungeon_minimap_h",
             "dungeon_home_x", "dungeon_home_y", "dungeon_tolerance_px", "dungeon_npc_offset_x",
@@ -2664,6 +2700,7 @@ class MapleBotApp(tk.Tk):
         images = ttk.LabelFrame(tab, text="Images")
         images.pack(fill="x", pady=5)
         self.path_row(images, "Dungeon Master image", self.vars["dungeon_npc_image"])
+        self.path_row(images, "END CHAT button image", self.vars["dungeon_end_chat_image"])
         self.path_row(images, "Finish banner", self.vars["dungeon_finish_image"])
         self.path_row(images, "Purple portal image", self.vars["dungeon_portal_image"])
         self.inline_entries(images, [("Confidence", "dungeon_confidence")])
@@ -3121,6 +3158,7 @@ class MapleBotApp(tk.Tk):
             parse_int(self.vars["dungeon_henesys_wait_after_exit_sec"].get(), 10),
             self.dialog_text.get("1.0", "end").strip(),
             parse_int(self.vars["dungeon_return_home_every_ms"].get(), 750),
+            self.vars["dungeon_end_chat_image"].get(),
         )
         return cfg
 
@@ -3207,6 +3245,7 @@ class MapleBotApp(tk.Tk):
         self.vars["dungeon_death_ok_y"].set(str(dungeon.death_ok_y))
         self.vars["dungeon_henesys_wait_after_exit_sec"].set(str(dungeon.henesys_wait_after_exit_sec))
         self.vars["dungeon_return_home_every_ms"].set(str(dungeon.return_home_every_ms))
+        self.vars["dungeon_end_chat_image"].set(resolve_template_path(dungeon.end_chat_image))
         self.dialog_text.delete("1.0", "end")
         dialog_steps = "" if dungeon.dialog_steps.strip() == LEGACY_DUNGEON_DIALOG_STEPS else dungeon.dialog_steps
         self.dialog_text.insert("1.0", dialog_steps)
