@@ -68,7 +68,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-22-easyocr-consensus-v54"
+APP_VERSION = "2026-06-22-ocr-attack-resume-v55"
 MAX_TEMPLATE_MATCH_CELLS = 35_000_000
 
 UI_BG = "#080414"
@@ -1295,6 +1295,7 @@ class AutomationBackend:
             self.ocr_failure_count = 0
             self.press("enter", force=True)
             self.suppress_enter_until = now_ms() + 1800
+            self.resume_farming_after_ocr()
             self.log("Lie Detector result: passed.")
             append_event_log(f"Lie Detector result classified as passed. raw={result!r}")
             return
@@ -1312,6 +1313,20 @@ class AutomationBackend:
         if normalized:
             self.log(f"Lie Detector result could not be classified: {normalized}")
             append_event_log(f"Lie Detector result could not be classified. raw={result!r} normalized={normalized!r}")
+
+    def resume_farming_after_ocr(self) -> None:
+        current = now_ms()
+        resume_at = current + 350
+        self.ocr_active_until = resume_at
+        self.action_pause_until = resume_at
+        self.attack_resume_at = resume_at
+        self.ocr_pause_until = current + 2500
+        self.last_detector["__ocr__"] = current
+        self.last_ocr_popup = None
+        self.attack_loop_enabled = self.running
+        self.attack_held = False
+        self.attack_key_held = ""
+        append_event_log("Lie Detector passed; farming attack scheduled to resume in 350ms.")
 
     def read_ocr_region(self, ocr: OcrConfig) -> str:
         x, y, width, height = self.ld_code_region(ocr)
