@@ -68,7 +68,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-17-dungeon-master-upper-label-v53"
+APP_VERSION = "2026-06-22-easyocr-consensus-v54"
 MAX_TEMPLATE_MATCH_CELLS = 35_000_000
 
 UI_BG = "#080414"
@@ -1274,6 +1274,7 @@ class AutomationBackend:
             result_w,
             result_h,
             save_name="last_ld_result_crop.png",
+            require_ld_code=False,
         )
         if self.should_abort_actions():
             append_event_log("Lie Detector result check aborted after OCR read because bot was stopped.")
@@ -1418,6 +1419,7 @@ class AutomationBackend:
         height: int,
         psm_modes: tuple[str, ...] = ("6", "7"),
         save_name: str = "last_ocr_crop.png",
+        require_ld_code: bool = True,
     ) -> str:
         reader = self.get_easyocr_reader()
         if reader is None:
@@ -1432,8 +1434,8 @@ class AutomationBackend:
         except Exception:
             pass
         processed_images = self.prepare_ocr_images(img)
-        candidates = []
-        for processed in processed_images:
+        observations: list[tuple[str, float]] = []
+        for variant_index, processed in enumerate(processed_images):
             if np is not None:
                 arr = np.array(processed.convert("L"))
             else:
@@ -1442,23 +1444,49 @@ class AutomationBackend:
                 results = reader.readtext(
                     arr,
                     allowlist=OCR_ALLOWED_CHARS,
-                    detail=0,
+                    detail=1,
                     paragraph=False,
                 )
             except Exception as exc:
                 append_event_log(f"EasyOCR read failed for {save_name}: {exc}")
                 continue
-            candidate = clean_ocr_text("".join(results))
-            candidates.append(candidate)
-            if is_valid_ld_code(candidate):
-                append_event_log(f"OCR early valid candidate from {save_name}: {candidate}")
-                return candidate
-        append_event_log(f"OCR candidates from {save_name}: {candidates}")
-        valid = [candidate for candidate in candidates if is_valid_ld_code(candidate)]
+            texts = [str(item[1]) for item in results if len(item) >= 3]
+            confidences = [float(item[2]) for item in results if len(item) >= 3]
+            candidate = clean_ocr_text("".join(texts))
+            confidence = sum(confidences) / len(confidences) if confidences else 0.0
+            observations.append((candidate, confidence))
+            if not require_ld_code:
+                normalized = candidate.lower()
+                if any(keyword in normalized for keyword in ("passed", "pass", "failed", "failure", "fail")):
+                    append_event_log(
+                        f"OCR result keyword found in {save_name} variant={variant_index}: "
+                        f"text={candidate!r} confidence={confidence:.3f}"
+                    )
+                    return candidate
+        append_event_log(f"OCR observations from {save_name}: {observations}")
+        if not require_ld_code:
+            nonempty = [item for item in observations if item[0]]
+            if nonempty:
+                return max(nonempty, key=lambda item: (item[1], len(item[0])))[0]
+            return ""
+        valid = [item for item in observations if is_valid_ld_code(item[0])]
         if valid:
-            ranked = sorted(valid, key=lambda candidate: (score_ld_code_candidate(candidate), len(candidate)), reverse=True)
-            append_event_log(f"OCR ranked candidates from {save_name}: {[(candidate, score_ld_code_candidate(candidate)) for candidate in ranked]}")
-            return ranked[0]
+            def consensus_score(item: tuple[str, float]) -> float:
+                candidate, confidence = item
+                agreement = 0.0
+                for other, other_confidence in valid:
+                    if len(other) != len(candidate):
+                        continue
+                    matches = sum(left == right for left, right in zip(candidate, other))
+                    agreement += (matches / max(len(candidate), 1)) * (0.25 + other_confidence)
+                return score_ld_code_candidate(candidate) + confidence * 35.0 + agreement * 20.0
+
+            ranked = sorted(valid, key=consensus_score, reverse=True)
+            append_event_log(
+                f"OCR consensus ranking from {save_name}: "
+                f"{[(candidate, round(confidence, 3), round(consensus_score((candidate, confidence)), 2)) for candidate, confidence in ranked]}"
+            )
+            return ranked[0][0]
         append_event_log(f"OCR produced no valid LD code from {save_name}; refusing fallback text.")
         return ""
 
