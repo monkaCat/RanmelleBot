@@ -68,7 +68,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-22-lightweight-ocr-attack-resume-v45"
+APP_VERSION = "2026-06-22-lightweight-fast-result-resume-v46"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -1245,7 +1245,7 @@ class AutomationBackend:
         if ocr.result_x <= 0 or ocr.result_y <= 0 or ocr.result_w <= 0 or ocr.result_h <= 0:
             append_event_log("Lie Detector result region not set; result could not be checked.")
             return
-        time.sleep(max(ocr.result_delay_ms, 100) / 1000)
+        time.sleep(min(max(ocr.result_delay_ms, 100), 350) / 1000)
         if self.should_abort_actions():
             append_event_log("Lie Detector result check aborted because bot was stopped.")
             return
@@ -1298,7 +1298,7 @@ class AutomationBackend:
 
     def resume_farming_after_ocr(self) -> None:
         current = now_ms()
-        resume_at = current + 350
+        resume_at = current + 100
         self.ocr_active_until = resume_at
         self.action_pause_until = resume_at
         self.attack_resume_at = resume_at
@@ -1308,7 +1308,7 @@ class AutomationBackend:
         self.attack_loop_enabled = self.running
         self.attack_held = False
         self.attack_key_held = ""
-        append_event_log("Lie Detector passed; farming attack scheduled to resume in 350ms.")
+        append_event_log("Lie Detector passed; farming attack scheduled to resume in 100ms.")
 
     def read_ocr_region(self, ocr: OcrConfig) -> str:
         x, y, width, height = self.ld_code_region(ocr)
@@ -1430,7 +1430,11 @@ class AutomationBackend:
             img.save(APP_DIR / save_name)
         except Exception:
             pass
-        processed_images = self.prepare_ocr_images(img)
+        processed_images = (
+            self.prepare_ocr_images(img)
+            if require_ld_code
+            else self.prepare_result_ocr_images(img)
+        )
         observations: list[tuple[str, float]] = []
         for variant_index, processed in enumerate(processed_images):
             if np is not None:
@@ -1486,6 +1490,22 @@ class AutomationBackend:
             return ranked[0][0]
         append_event_log(f"OCR produced no valid LD code from {save_name}; refusing fallback text.")
         return ""
+
+    def prepare_result_ocr_images(self, img: Any) -> list[Any]:
+        gray = img.convert("L")
+        if cv2 is None or np is None or Image is None:
+            return [gray.resize((gray.width * 3, gray.height * 3))]
+        gray_arr = np.array(gray)
+        enlarged = cv2.resize(gray_arr, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+        sharp = cv2.addWeighted(
+            enlarged,
+            1.5,
+            cv2.GaussianBlur(enlarged, (0, 0), 1.0),
+            -0.5,
+            0,
+        )
+        _, binary = cv2.threshold(sharp, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        return [Image.fromarray(sharp), Image.fromarray(binary)]
 
     def prepare_ocr_images(self, img: Any) -> list[Any]:
         gray = img.convert("L")
