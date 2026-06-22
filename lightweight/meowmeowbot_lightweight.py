@@ -68,7 +68,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-22-lightweight-fast-result-resume-v46"
+APP_VERSION = "2026-06-23-lightweight-farming-death-revive-v47"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -1088,7 +1088,11 @@ class AutomationBackend:
         for index, detector in enumerate(config.detectors):
             if not detector.enabled or not detector.image:
                 continue
-            if detector.mode != config.mode:
+            is_death_detector = (
+                detector.action == "Click Death OK"
+                or "death" in detector.name.lower()
+            )
+            if detector.mode != config.mode and not is_death_detector:
                 continue
             ident = f"detector_{index}"
             if current - self.last_detector.get(ident, 0) < max(detector.cooldown_ms, 200):
@@ -1102,7 +1106,7 @@ class AutomationBackend:
 
     def apply_detector_action(self, config: BotConfig, detector: DetectorConfig, match: dict[str, Any]) -> None:
         action = detector.action
-        if detector.mode == "Dungeon" and "death" in detector.name.lower():
+        if action == "Click Death OK" or "death" in detector.name.lower():
             self.handle_death_dialog(config.dungeon)
             return
         if action == "Hold Space 3s":
@@ -1941,8 +1945,13 @@ class AutomationBackend:
 
     def handle_death_dialog(self, dungeon: DungeonConfig) -> None:
         if dungeon.death_ok_x > 0 and dungeon.death_ok_y > 0:
+            self.pause_attack_for_input(900)
             self.click(dungeon.death_ok_x, dungeon.death_ok_y)
             self.log(f"Death Dialog handled: OK clicked at {dungeon.death_ok_x}, {dungeon.death_ok_y}.")
+            append_event_log(
+                f"Death Dialog handled in active mode: OK clicked at "
+                f"{dungeon.death_ok_x}, {dungeon.death_ok_y}."
+            )
             return
         self.log("Death Dialog detected, but Death OK X/Y is not set.")
 
