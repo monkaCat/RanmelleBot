@@ -68,7 +68,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-28-lightweight-dungeon-leecher-command-v48"
+APP_VERSION = "2026-06-28-lightweight-leecher-finish-exit-v49"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -833,8 +833,7 @@ class AutomationBackend:
                     self.run_detectors(config, current)
                 elif config.mode == "Dungeon":
                     self.run_detectors(config, current)
-                    is_leecher = str(config.dungeon.role).lower() == "leecher"
-                    combat_active = True if is_leecher else self.run_dungeon(config, current)
+                    combat_active = self.run_dungeon(config, current)
                     self.attack_loop_enabled = bool(config.attack_enabled and combat_active)
                     skill_cast = False
                     if combat_active:
@@ -1576,6 +1575,14 @@ class AutomationBackend:
         dungeon = config.dungeon
         if not dungeon.enabled:
             return False
+        finish = self.find_image(dungeon.finish_image, dungeon.confidence)
+        if finish and not self.finish_handled:
+            self.finish_handled = True
+            self.log("Dungeon finish banner detected.")
+            self.finish_dungeon(dungeon)
+            return False
+        if not finish:
+            self.finish_handled = False
         if dungeon.role == "Leecher":
             if not self.dungeon_entry_started:
                 self.dungeon_entry_started = True
@@ -1586,14 +1593,6 @@ class AutomationBackend:
                 self.last_dungeon_entry_check = current
                 self.dungeon_entry_started = self.start_dungeon_entry(dungeon, current)
             return False
-        finish = self.find_image(dungeon.finish_image, dungeon.confidence)
-        if finish and not self.finish_handled:
-            self.finish_handled = True
-            self.log("Dungeon finish banner detected.")
-            self.finish_dungeon(dungeon)
-            return False
-        if not finish:
-            self.finish_handled = False
         cycle_ms = max(dungeon.return_home_every_ms, 250)
         if current >= self.dungeon_phase_until:
             if self.dungeon_cycle_phase == "attack":
@@ -2122,6 +2121,8 @@ class AutomationBackend:
 
     def finish_dungeon(self, dungeon: DungeonConfig) -> None:
         self.ensure_target_window()
+        self.attack_loop_enabled = False
+        self.release_attack()
         self.action_pause_until = now_ms() + 12000
         release_modifiers()
         pyautogui.keyDown("left")
