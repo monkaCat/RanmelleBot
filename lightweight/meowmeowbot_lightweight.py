@@ -68,7 +68,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-28-lightweight-leecher-finish-exit-v49"
+APP_VERSION = "2026-06-28-lightweight-henesys-no-attack-v50"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -712,7 +712,7 @@ class AutomationBackend:
         self.last_ocr_popup = None
         self.release_attack()
         self.running = True
-        self.attack_loop_enabled = bool(config.attack_enabled and config.mode in {"Farming", "Dungeon"})
+        self.attack_loop_enabled = bool(config.attack_enabled and config.mode == "Farming")
         self.thread = threading.Thread(target=self.loop, args=(config,), daemon=True)
         self.thread.start()
         self.attack_thread = threading.Thread(target=self.attack_loop, args=(config,), daemon=True)
@@ -838,7 +838,7 @@ class AutomationBackend:
                     skill_cast = False
                     if combat_active:
                         skill_cast = self.run_skills(config, current)
-                    if not skill_cast:
+                    if combat_active and not skill_cast:
                         self.run_command(config, current)
                 time.sleep(0.03)
         except Exception as exc:
@@ -1575,6 +1575,7 @@ class AutomationBackend:
         dungeon = config.dungeon
         if not dungeon.enabled:
             return False
+        in_henesys = self.find_image(DEFAULT_IMAGES["henesys"], max(dungeon.confidence, 0.80)) is not None
         finish = self.find_image(dungeon.finish_image, dungeon.confidence)
         if finish and not self.finish_handled:
             self.finish_handled = True
@@ -1583,6 +1584,12 @@ class AutomationBackend:
             return False
         if not finish:
             self.finish_handled = False
+        if in_henesys and dungeon.role == "Leecher":
+            self.release_attack()
+            if current - self.last_dungeon_gate_log >= 5000:
+                self.last_dungeon_gate_log = current
+                self.log("Henesys detected; Leecher combat paused.")
+            return False
         if dungeon.role == "Leecher":
             if not self.dungeon_entry_started:
                 self.dungeon_entry_started = True
