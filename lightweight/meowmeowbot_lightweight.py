@@ -68,7 +68,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-23-lightweight-farming-death-revive-v47"
+APP_VERSION = "2026-06-28-lightweight-dungeon-leecher-command-v48"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -202,6 +202,19 @@ def parse_float(value: Any, default: float = 0.0) -> float:
         return float(str(value).strip())
     except Exception:
         return default
+
+
+def parse_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on", "enabled"}:
+        return True
+    if text in {"0", "false", "no", "off", "disabled", ""}:
+        return False
+    return default
 
 
 def normalize_key(value: str) -> str:
@@ -699,7 +712,7 @@ class AutomationBackend:
         self.last_ocr_popup = None
         self.release_attack()
         self.running = True
-        self.attack_loop_enabled = bool(config.attack_enabled and config.mode == "Farming")
+        self.attack_loop_enabled = bool(config.attack_enabled and config.mode in {"Farming", "Dungeon"})
         self.thread = threading.Thread(target=self.loop, args=(config,), daemon=True)
         self.thread.start()
         self.attack_thread = threading.Thread(target=self.attack_loop, args=(config,), daemon=True)
@@ -820,7 +833,8 @@ class AutomationBackend:
                     self.run_detectors(config, current)
                 elif config.mode == "Dungeon":
                     self.run_detectors(config, current)
-                    combat_active = self.run_dungeon(config, current)
+                    is_leecher = str(config.dungeon.role).lower() == "leecher"
+                    combat_active = True if is_leecher else self.run_dungeon(config, current)
                     self.attack_loop_enabled = bool(config.attack_enabled and combat_active)
                     skill_cast = False
                     if combat_active:
@@ -1565,8 +1579,8 @@ class AutomationBackend:
         if dungeon.role == "Leecher":
             if not self.dungeon_entry_started:
                 self.dungeon_entry_started = True
-                self.log("Dungeon role is Leecher; combat automation is disabled.")
-            return False
+                self.log("Dungeon role is Leecher; entry routine skipped, combat active.")
+            return True
         if not self.dungeon_entry_started:
             if current - self.last_dungeon_entry_check >= 7000:
                 self.last_dungeon_entry_check = current
@@ -3355,6 +3369,8 @@ class MapleBotApp(tk.Tk):
         for key in ["mode", "keyboard_layout", "start_hotkey", "stop_hotkey", "mouse_hotkey", "attack_enabled", "attack_key", "attack_delay_ms", "command_enabled", "command_text", "command_every_sec", "command_step_delay_ms"]:
             if key in raw:
                 setattr(cfg, key, raw[key])
+        cfg.attack_enabled = parse_bool(cfg.attack_enabled, True)
+        cfg.command_enabled = parse_bool(cfg.command_enabled, False)
         cfg.game_window = REQUIRED_GAME_WINDOW
         cfg.skills = []
         for item in raw.get("skills", asdict(cfg)["skills"]):
