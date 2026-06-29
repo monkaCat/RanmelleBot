@@ -68,7 +68,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-28-lightweight-henesys-no-attack-v50"
+APP_VERSION = "2026-06-29-lightweight-global-death-click-v51"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -824,6 +824,9 @@ class AutomationBackend:
                 current = now_ms()
                 if config.mode == "Farming":
                     self.attack_loop_enabled = config.attack_enabled
+                    if self.run_death_dialog_check(config, current):
+                        time.sleep(0.03)
+                        continue
                     if self.run_ocr(config, current):
                         time.sleep(0.03)
                         continue
@@ -832,6 +835,9 @@ class AutomationBackend:
                         self.run_command(config, current)
                     self.run_detectors(config, current)
                 elif config.mode == "Dungeon":
+                    if self.run_death_dialog_check(config, current):
+                        time.sleep(0.03)
+                        continue
                     self.run_detectors(config, current)
                     combat_active = self.run_dungeon(config, current)
                     self.attack_loop_enabled = bool(config.attack_enabled and combat_active)
@@ -1105,6 +1111,8 @@ class AutomationBackend:
                 detector.action == "Click Death OK"
                 or "death" in detector.name.lower()
             )
+            if is_death_detector:
+                continue
             if detector.mode != config.mode and not is_death_detector:
                 continue
             ident = f"detector_{index}"
@@ -1116,6 +1124,18 @@ class AutomationBackend:
             self.last_detector[ident] = current
             self.log(f"{detector.name} detected at {match['center']}.")
             self.apply_detector_action(config, detector, match)
+
+    def run_death_dialog_check(self, config: BotConfig, current: int) -> bool:
+        ident = "__death_dialog__"
+        if current - self.last_detector.get(ident, 0) < 1000:
+            return False
+        match = self.find_image(DEFAULT_IMAGES["dead"], 0.80)
+        if not match:
+            return False
+        self.last_detector[ident] = current
+        self.log(f"Death Dialog detected at {match['center']}.")
+        self.handle_death_dialog(config.dungeon)
+        return True
 
     def apply_detector_action(self, config: BotConfig, detector: DetectorConfig, match: dict[str, Any]) -> None:
         action = detector.action
