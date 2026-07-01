@@ -68,7 +68,7 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "meowmeowbot_config.json"
 EVENT_LOG = APP_DIR / "log.txt"
 REQUIRED_GAME_WINDOW = "Ranmelle"
-APP_VERSION = "2026-06-29-lightweight-global-death-click-v51"
+APP_VERSION = "2026-07-01-lightweight-window-bound-vision-v52"
 
 UI_BG = "#080414"
 UI_BG_2 = "#0f0a24"
@@ -1642,9 +1642,10 @@ class AutomationBackend:
     def find_ocr_popup(self, ocr: OcrConfig) -> Optional[dict[str, Any]]:
         if not ocr.popup_image:
             return None
+        search_region = self.target_window_region()
         if not ocr.cookbot_label_preset:
-            return self.find_image(ocr.popup_image, ocr.popup_confidence)
-        candidates = self.find_image_candidates(ocr.popup_image, ocr.popup_confidence, limit=20)
+            return self.find_image(ocr.popup_image, ocr.popup_confidence, search_region)
+        candidates = self.find_image_candidates(ocr.popup_image, ocr.popup_confidence, search_region, limit=20)
         for candidate in candidates:
             self.last_ocr_popup = candidate
             if self.is_valid_cookbot_code_crop(candidate):
@@ -2284,6 +2285,14 @@ class AutomationBackend:
             "source": "label",
         }
 
+    def normalized_image_region(self, region: Optional[tuple[int, int, int, int]]) -> Optional[tuple[int, int, int, int]]:
+        if region:
+            x, y, width, height = region
+            if width > 0 and height > 0:
+                return (max(0, x), max(0, y), max(1, width), max(1, height))
+            return None
+        return self.target_window_region()
+
     def find_image(self, template_path: str, confidence: float, region: Optional[tuple[int, int, int, int]] = None) -> Optional[dict[str, Any]]:
         template_path = resolve_template_path(template_path)
         if not template_path or not os.path.exists(template_path):
@@ -2292,6 +2301,7 @@ class AutomationBackend:
             return None
         offset_x = 0
         offset_y = 0
+        region = self.normalized_image_region(region)
         if region:
             offset_x, offset_y, width, height = region
             screenshot = ImageGrab.grab(bbox=(offset_x, offset_y, offset_x + width, offset_y + height))
@@ -2302,17 +2312,33 @@ class AutomationBackend:
         if template is None:
             return None
         h, w = template.shape[:2]
-        result = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
+        screen_h, screen_w = screen.shape[:2]
+        if w > screen_w or h > screen_h:
+            append_event_log(
+                f"Image search skipped because template is larger than search region: "
+                f"template=({w},{h}) region=({screen_w},{screen_h}) path={template_path}"
+            )
+            return None
+        try:
+            result = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
+        except cv2.error as exc:
+            append_event_log(f"Image search failed in color matchTemplate: {exc}")
+            return None
         _, max_val, _, max_loc = cv2.minMaxLoc(result)
         best_val = float(max_val)
         best_loc = max_loc
         gray_screen = cv2.cvtColor(screen, cv2.COLOR_BGR2GRAY)
         gray_template = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
-        gray_result = cv2.matchTemplate(gray_screen, gray_template, cv2.TM_CCOEFF_NORMED)
-        _, gray_val, _, gray_loc = cv2.minMaxLoc(gray_result)
-        if gray_val > best_val:
-            best_val = float(gray_val)
-            best_loc = gray_loc
+        try:
+            gray_result = cv2.matchTemplate(gray_screen, gray_template, cv2.TM_CCOEFF_NORMED)
+        except cv2.error as exc:
+            append_event_log(f"Image search failed in gray matchTemplate: {exc}")
+            gray_result = None
+        if gray_result is not None:
+            _, gray_val, _, gray_loc = cv2.minMaxLoc(gray_result)
+            if gray_val > best_val:
+                best_val = float(gray_val)
+                best_loc = gray_loc
         if best_val < confidence:
             return None
         x, y = best_loc
@@ -2339,6 +2365,7 @@ class AutomationBackend:
             return []
         offset_x = 0
         offset_y = 0
+        region = self.normalized_image_region(region)
         if region:
             offset_x, offset_y, width, height = region
             screenshot = ImageGrab.grab(bbox=(offset_x, offset_y, offset_x + width, offset_y + height))
@@ -2349,10 +2376,25 @@ class AutomationBackend:
         if template is None:
             return []
         h, w = template.shape[:2]
-        maps = [cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)]
+        screen_h, screen_w = screen.shape[:2]
+        if w > screen_w or h > screen_h:
+            append_event_log(
+                f"Image candidate search skipped because template is larger than search region: "
+                f"template=({w},{h}) region=({screen_w},{screen_h}) path={template_path}"
+            )
+            return []
+        maps = []
+        try:
+            maps.append(cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED))
+        except cv2.error as exc:
+            append_event_log(f"Image candidate search failed in color matchTemplate: {exc}")
+            return []
         gray_screen = cv2.cvtColor(screen, cv2.COLOR_BGR2GRAY)
         gray_template = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
-        maps.append(cv2.matchTemplate(gray_screen, gray_template, cv2.TM_CCOEFF_NORMED))
+        try:
+            maps.append(cv2.matchTemplate(gray_screen, gray_template, cv2.TM_CCOEFF_NORMED))
+        except cv2.error as exc:
+            append_event_log(f"Image candidate search failed in gray matchTemplate: {exc}")
 
         raw: list[tuple[float, int, int]] = []
         for result in maps:
